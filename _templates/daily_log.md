@@ -12,21 +12,30 @@ One sentence: what we were trying to get the arm to do.
 3.
 
 ## Results
-- Worked:
-- Didn't work:
-- Not tested yet:
+**Worked on the real hardware:**
+-
+
+**Worked on the computer only:**
+-
+
+**Didn't work:**
+-
+
+**Not tested yet:**
+-
 
 ## Problems and fixes
-| Problem | What caused it | How we fixed it |
+| Problem | Cause | Fix |
 |---|---|---|
 |  |  |  |
 
-## Key idea (the 20% that mattered today)
-Explain it in your own words, as if teaching a new club member.
+## Key idea
+The most important thing from today, in plain words, as if teaching a new club member.
 
 ## Code and media
-- Code: `code/...`
-- Photos/videos: `media/...`
+- Code: [`script_name.py`](code/script_name.py)
+- Pictures: [what it shows](media/picture_name.png)
+- Videos: link a video only if it's on GitHub (see `.gitignore`)
 
 ## Next time
 - [ ]
