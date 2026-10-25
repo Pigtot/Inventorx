@@ -5,4 +5,4 @@ Each week has its own folder. Each workday has its own log inside that folder.
 
 | Week | Dates | One-line summary |
 |---|---|---|
-| [Week 1](Week01_2026-10-19/week_summary.md) | Oct 19 – Oct 25, 2026 | Notebook set up. |
+| [Week 1](Week01_2026-10-19/week_summary.md) | Oct 19 – Oct 25, 2026 | Arm, D435, and SmolVLA connected on the Windows PC. VR teleop (v5) drives the real arm. Jenga CNN v1–v3 trained on Blender pictures. |
