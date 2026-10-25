@@ -1,0 +1,699 @@
+<title>Jenga Net Explorer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one calm column. "Try it" pairs the photo with the network's answers, the network diagram
+   runs full width underneath, then training charts as small multiples, then the final test. */
+:root {
+  --bg: #f5f6f7;
+  --surface: #ffffff;
+  --ink: #13171c;
+  --ink-2: #4a545e;
+  --muted: #7b858f;
+  --line: #dfe3e7;
+  --accent: #2a78d6;
+  --series-2: #eb6834;
+  --wood: #c99a62;
+  --good: #0a7d0a;
+  --bad: #c93434;
+  --pos: #2a78d6;
+  --neg: #e34948;
+  --node-lo: #e9eef4;
+  --node-hi: #104281;
+  --edge: rgba(19, 23, 28, 0.09);
+  --font-display: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101214; --surface: #191c1f; --ink: #eef0f2; --ink-2: #b8c0c8; --muted: #88929b; --line: #2b3035;
+    --accent: #4b93ea; --series-2: #e0703f; --wood: #d4a874; --good: #2bb52b; --bad: #ec6b6b;
+    --pos: #4b93ea; --neg: #ec6b6b; --node-lo: #1f262e; --node-hi: #9cc4f2; --edge: rgba(255, 255, 255, 0.09);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101214; --surface: #191c1f; --ink: #eef0f2; --ink-2: #b8c0c8; --muted: #88929b; --line: #2b3035;
+  --accent: #4b93ea; --series-2: #e0703f; --wood: #d4a874; --good: #2bb52b; --bad: #ec6b6b;
+  --pos: #4b93ea; --neg: #ec6b6b; --node-lo: #1f262e; --node-hi: #9cc4f2; --edge: rgba(255, 255, 255, 0.09);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--font-body); }
+img { max-width: 100%; }
+.page {
+  max-width: 1080px; margin: 0 auto;
+  padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 40px;
+}
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(28px, 4vw, 40px); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 22px; font-weight: 650; }
+h3 { font-size: 16px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+.eyebrow { font: 500 12px var(--font-data); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+  display: flex; align-items: center; gap: 10px; }
+.eyebrow .block { width: 30px; height: 10px; border-radius: 2px; background: var(--wood); }
+header { display: grid; gap: 10px; }
+.lede { color: var(--ink-2); font-size: 16px; }
+section { display: grid; gap: 16px; }
+.section-head { display: grid; gap: 6px; }
+.section-head p { color: var(--ink-2); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.data { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+
+/* picture picker */
+.strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; }
+.thumb { flex: 0 0 auto; display: grid; gap: 4px; justify-items: center; padding: 4px; border: 2px solid transparent;
+  border-radius: 8px; background: none; color: var(--ink-2); font: 500 11px var(--font-data); cursor: pointer; position: relative; }
+.thumb img { width: 64px; height: 64px; border-radius: 5px; display: block; }
+.thumb[aria-pressed="true"] { border-color: var(--accent); color: var(--ink); }
+.thumb:hover { background: var(--surface); }
+.thumb:focus-visible, .net-node:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.thumb .miss { position: absolute; top: 2px; right: 2px; background: var(--bad); color: #fff; border-radius: 4px; padding: 0 4px; font-size: 10px; }
+.strip-label { flex: 0 0 auto; align-self: center; writing-mode: vertical-rl; transform: rotate(180deg); padding: 0 2px 0 8px;
+  font: 500 10px var(--font-data); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.chip.none { color: var(--muted); }
+
+/* photo + answers */
+.try-grid { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); gap: 24px; padding: 20px; }
+@media (max-width: 680px) { .try-grid { grid-template-columns: minmax(0, 1fr); } }
+.photo { margin: 0; display: grid; gap: 10px; }
+.photo-box { position: relative; width: 100%; max-width: 320px; aspect-ratio: 1; }
+.photo-box img, .photo-box svg, .photo-box canvas { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 6px; }
+.photo-box canvas { pointer-events: none; }
+.toggle { display: flex; gap: 8px; align-items: center; color: var(--ink-2); font-size: 13px; }
+.readout { display: grid; gap: 16px; align-content: start; min-width: 0; }
+.verdict { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
+.verdict .label { font: 700 32px var(--font-display); text-transform: capitalize; }
+.chip { font: 600 12px var(--font-body); padding: 3px 9px; border-radius: 999px; border: 1px solid currentColor; }
+.chip.good { color: var(--good); } .chip.bad { color: var(--bad); }
+.probs { display: grid; gap: 6px; }
+.prob { display: grid; grid-template-columns: 76px 1fr 48px; gap: 10px; align-items: center; font-size: 13px; }
+.prob .track { height: 10px; background: var(--node-lo); border-radius: 0 4px 4px 0; overflow: hidden; }
+.prob .fill { height: 100%; background: var(--accent); border-radius: 0 4px 4px 0; }
+.prob .pct { text-align: right; }
+.prob.top { font-weight: 600; }
+table { border-collapse: collapse; font-size: 13px; }
+.measures { width: 100%; max-width: 420px; }
+.measures th, .measures td { text-align: left; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); }
+.measures th { color: var(--muted); font-weight: 500; font-size: 12px; }
+.small { font-size: 13px; color: var(--ink-2); }
+
+/* network */
+.net { padding: 20px; display: grid; gap: 14px; }
+.net-scroll { overflow-x: auto; }
+#net { display: block; width: 100%; min-width: 720px; height: auto; }
+#net text { font-family: var(--font-body); fill: var(--ink-2); font-size: 12px; }
+#net .col-title { fill: var(--ink); font-weight: 600; font-size: 13px; }
+#net .col-sub { fill: var(--muted); font-size: 11px; }
+#net .ans-label { font-family: var(--font-data); font-size: 11.5px; fill: var(--ink); }
+.net-node { cursor: pointer; }
+.net-node circle { stroke: var(--line); stroke-width: 1; }
+.net-node.selected circle { stroke: var(--ink); stroke-width: 2.5; }
+.neuron { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 16px; align-items: center; }
+@media (max-width: 560px) { .neuron { grid-template-columns: auto auto; } .neuron .about { grid-column: 1 / -1; } }
+.neuron figure { margin: 0; display: grid; gap: 4px; font-size: 11px; color: var(--muted); text-align: center; }
+.neuron img, .neuron canvas { width: 132px; height: 132px; border-radius: 5px; image-rendering: pixelated; display: block; }
+.neuron .about { display: grid; gap: 6px; min-width: 0; }
+.legend-row { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--ink-2); align-items: center; }
+.swatch { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.ramp { display: inline-block; width: 60px; height: 10px; border-radius: 2px; vertical-align: middle; margin: 0 6px;
+  background: linear-gradient(90deg, var(--node-lo), var(--node-hi)); border: 1px solid var(--line); }
+
+/* picture -> idea ladder */
+.ladder { padding: 20px; display: grid; gap: 14px; }
+.ladder-scroll { overflow-x: auto; }
+.ladder-row { display: flex; align-items: flex-start; gap: 10px; min-width: max-content; }
+.rung > canvas { width: 136px; height: 136px; border-radius: 5px; image-rendering: pixelated; display: block; }
+.rung { display: grid; gap: 6px; justify-items: start; width: 140px; }
+.rung h4 { margin: 0; font: 600 13px var(--font-body); }
+.rung .sub { font: 11px var(--font-data); color: var(--muted); }
+.rung .cap { font-size: 12px; color: var(--ink-2); line-height: 1.35; }
+.rung-maps { display: grid; grid-template-columns: repeat(2, 66px); gap: 4px; }
+.rung-maps canvas { width: 66px; height: 66px; border-radius: 3px; image-rendering: pixelated; display: block; }
+.rung > img { width: 136px; height: 136px; border-radius: 5px; display: block; }
+.step-arrow { align-self: center; color: var(--muted); font-size: 18px; padding-top: 30px; }
+
+/* charts */
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.chart { padding: 14px 14px 8px; position: relative; display: grid; gap: 6px; min-width: 0; }
+.chart svg { width: 100%; height: auto; display: block; overflow: visible; }
+.chart text { font-family: var(--font-data); font-size: 10px; fill: var(--muted); }
+.chart .end-label { font-family: var(--font-body); font-size: 11px; fill: var(--ink); }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .axis { stroke: var(--muted); stroke-width: 1; opacity: 0.6; }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 8px; font: 12px var(--font-data); color: var(--ink); box-shadow: 0 4px 14px rgba(0,0,0,0.12); white-space: nowrap; }
+details { font-size: 13px; color: var(--ink-2); }
+details summary { cursor: pointer; }
+.table-scroll { overflow-x: auto; margin-top: 8px; }
+.history th, .history td { padding: 4px 12px 4px 0; text-align: right; border-bottom: 1px solid var(--line); }
+.history th:first-child, .history td:first-child { text-align: left; }
+
+/* final test */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.stat { padding: 14px 16px; display: grid; gap: 2px; }
+.stat .v { font: 650 26px var(--font-display); }
+.stat .k { font-size: 12px; color: var(--ink-2); }
+.test-row { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 24px; align-items: start; }
+@media (max-width: 640px) { .test-row { grid-template-columns: minmax(0, 1fr); } }
+.confusion td, .confusion th { width: 74px; height: 40px; text-align: center; font-size: 13px; }
+.confusion th { color: var(--muted); font-weight: 500; font-size: 12px; }
+.confusion td { border: 2px solid var(--bg); border-radius: 4px; }
+.caveat { border-left: 3px solid var(--wood); padding: 4px 0 4px 12px; color: var(--ink-2); font-size: 14px; }
+.credits { display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 16px; }
+.credits ul { margin: 0; padding-left: 18px; font-size: 12px; color: var(--ink-2); display: grid; gap: 2px; }
+.credits a { color: var(--accent); }
+@media (prefers-reduced-motion: no-preference) {
+  .net-node circle, .prob .fill, #net line { transition: fill .25s, width .25s, stroke .25s, stroke-opacity .25s; }
+}
+</style>
+
+<div class="page">
+  <header>
+    <p class="eyebrow"><span class="block" aria-hidden="true"></span>Arm_learn · Week 1 · Jenga CNN</p>
+    <h1>Jenga Net Explorer</h1>
+    <p class="lede">A ResNet-18 looks at one Jenga block (7.5 × 2.5 × 1.5 cm) and answers two questions:
+      is it <b>flat</b>, on its <b>side</b>, or <b>standing</b>? And where are its <b>8 box corners</b>?
+      From those corners, the block's known size, and the camera's lens, <b>PnP</b> works out where the block sits in 3D
+      and how it's turned. Pick a test picture and watch which neurons fire.</p>
+  </header>
+
+  <section aria-labelledby="try-title">
+    <div class="section-head">
+      <h2 id="try-title">Try it</h2>
+      <p id="try-text">These are test pictures: the network never saw them while training. A red ✗ marks a wrong category guess.</p>
+    </div>
+    <div class="strip" id="strip" aria-label="Test pictures"></div>
+
+    <div class="card try-grid">
+      <figure class="photo">
+        <div class="photo-box">
+          <img id="photo" alt="Rendered Jenga block on a table">
+          <canvas id="heat-overlay" aria-hidden="true"></canvas>
+          <svg id="overlay" viewBox="0 0 256 256" aria-hidden="true"></svg>
+        </div>
+        <label class="toggle"><input type="checkbox" id="show-truth" checked> Show the true box (dashed white)</label>
+        <label class="toggle"><input type="checkbox" id="show-heat"> Show the corner heat map (where the network thinks corners are)</label>
+        <div class="legend-row"><span><span class="swatch" style="background: var(--accent)"></span>Network's 3D box</span></div>
+        <p class="small" id="photo-note"></p>
+      </figure>
+      <div class="readout">
+        <div class="verdict" id="verdict"></div>
+        <div class="probs" id="probs"></div>
+        <table class="measures" id="measures"></table>
+        <p class="small" id="corner-err"></p>
+      </div>
+    </div>
+
+    <div class="card ladder">
+      <div class="section-head">
+        <h3>From picture to idea</h3>
+        <p class="small">These are the 4 neurons in each layer that fired most for this picture. Each layer looks at a coarser grid
+          (56, then 28, 14, and 7 squares across), but every square covers more of the picture and stands for a more complex pattern.
+          Watch the block go from sharp edges to a blurry "block here" signal. Then head B zooms back up and paints heat maps
+          of the block's 8 corners. The middle of each heat map becomes one corner of the blue 3D box.</p>
+      </div>
+      <div class="ladder-scroll"><div class="ladder-row" id="ladder"></div></div>
+    </div>
+
+    <div class="card net">
+      <div class="section-head">
+        <h3>Inside the network</h3>
+        <p class="small">Each circle is one neuron. The stronger its blue, the more it fired for this picture. Click a neuron in layers 1–4 to
+          see <i>where</i> in the picture it fired. Hover or tab to a category answer to see which features pushed it
+          up (blue lines) or down (red lines). The corner numbers come from head B's heat map.</p>
+      </div>
+      <div class="legend-row">
+        <span>Fired a little<span class="ramp" aria-hidden="true"></span>a lot</span>
+        <span><span class="swatch" style="background: var(--pos)"></span>pushes the answer up</span>
+        <span><span class="swatch" style="background: var(--neg)"></span>pushes it down</span>
+      </div>
+      <div class="net-scroll"><svg id="net" viewBox="0 0 820 440" role="img" aria-label="Network diagram"></svg></div>
+      <div class="neuron" id="neuron">
+        <figure><img id="neuron-photo" alt="">The picture</figure>
+        <figure><canvas id="neuron-map" aria-label="Where the selected neuron fired"></canvas>Where it fired</figure>
+        <div class="about"><h3 id="neuron-title"></h3><p class="small" id="neuron-text"></p></div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="train-title">
+    <div class="section-head">
+      <h2 id="train-title">How training went</h2>
+      <p id="train-text"></p>
+    </div>
+    <div class="charts" id="charts"></div>
+    <details>
+      <summary>Show the numbers as a table</summary>
+      <div class="table-scroll"><table class="history data" id="history"></table></div>
+    </details>
+  </section>
+
+  <section aria-labelledby="test-title">
+    <div class="section-head">
+      <h2 id="test-title">Final test</h2>
+      <p id="test-text"></p>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="test-row">
+      <div class="card" style="padding: 14px 16px; display: grid; gap: 8px;">
+        <h3>Category mix-ups</h3>
+        <p class="small" id="confusion-text">Rows are the truth, columns are the guess. The diagonal is correct.</p>
+        <div class="table-scroll"><table class="confusion data" id="confusion"></table></div>
+      </div>
+      <p class="caveat" id="caveat"><b>Real photos: not tested yet.</b> Every picture here was made in Blender. The real test comes when we
+        photograph actual blocks with the D435 camera or a phone and run <code>05_predict.py</code> on them.</p>
+    </div>
+  </section>
+
+  <footer class="credits" id="credits" hidden>
+    <h3>Photo credits</h3>
+    <p class="small">The real photos come from Flickr through Openverse. They were cropped around one block and drawn on for this test.</p>
+    <ul id="credit-list"></ul>
+  </footer>
+</div>
+
+<script>
+const DATA = /*DATA*/null;
+const NS = "http://www.w3.org/2000/svg";
+const $ = (s) => document.querySelector(s);
+const LAYER_INFO = [
+  ["Layer 1", "Early neurons usually react to simple things: edges, lines, and changes in color."],
+  ["Layer 2", "Combines layer-1 edges into corners, stripes, and textures."],
+  ["Layer 3", "Combines those into bigger shapes and parts of the block."],
+  ["Layer 4", "Whole-block patterns. Each neuron's average becomes one of the 512 \"features\" that both heads read."],
+];
+let cur = 0, selected = { layer: 0, idx: 0 }, focusAnswer = null;
+
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const rgb = (hex) => { const h = hex.replace("#", ""); return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)); };
+function ramp(t) {
+  const a = rgb(css("--node-lo")), b = rgb(css("--node-hi"));
+  t = Math.max(0, Math.min(1, t));
+  return a.map((v, i) => Math.round(v + (b[i] - v) * t));
+}
+const rampCss = (t) => `rgb(${ramp(t).join(",")})`;
+function el(tag, attrs = {}, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (typeof v === "string" && v.startsWith("var(")) e.style.setProperty(k, v);   // theme colors work reliably as styles
+    else e.setAttribute(k, v);
+  }
+  if (parent) parent.appendChild(e);
+  return e;
+}
+const fmt = (v, d = 0) => Number(v).toFixed(d);
+
+/* ---------- picture picker ---------- */
+const labelName = (s) => (s.truth.cat === null ? "unsure" : DATA.categories[s.truth.cat]);
+function buildStrip() {
+  const strip = $("#strip");
+  let lastKind = null;
+  DATA.samples.forEach((s, i) => {
+    if (s.kind !== lastKind) {   // a small sideways label starts each group
+      const tag = document.createElement("span");
+      tag.className = "strip-label";
+      tag.textContent = s.kind === "real" ? "Real photos" : "Blender";
+      strip.appendChild(tag);
+      lastKind = s.kind;
+    }
+    const b = document.createElement("button");
+    b.className = "thumb";
+    b.type = "button";
+    b.innerHTML = `<img src="${s.img}" alt="">${labelName(s)}` +
+      (s.truth.cat !== null && s.guess.cat !== s.truth.cat ? `<span class="miss" title="Wrong category guess">✗</span>` : "");
+    b.setAttribute("aria-label", `${s.kind === "real" ? "Real photo" : "Test picture"} ${i + 1}, label: ${labelName(s)}`);
+    b.addEventListener("click", () => { cur = i; render(); });
+    strip.appendChild(b);
+  });
+  const nReal = DATA.samples.filter((s) => s.kind === "real").length;
+  if (nReal) {
+    $("#try-text").textContent = `The first ${DATA.samples.length - nReal} are Blender test pictures the network never trained on. ` +
+      `The last ${nReal} are real photos from Openverse, each cropped around one block and labeled by a person before the test. ` +
+      `A red ✗ marks a wrong category guess.`;
+  }
+}
+
+/* ---------- photo + answers ---------- */
+// the box's 12 edges: pairs of corners that differ along just one axis (same corner order as the labels)
+const EDGES = [];
+for (let i = 0; i < 8; i++) for (let j = i + 1; j < 8; j++) if ([1, 2, 4].includes(i ^ j)) EDGES.push([i, j]);
+function quad(corners) { return [0, 1, 2, 3].map((i) => `${corners[2 * i]},${corners[2 * i + 1]}`).join(" "); }
+function drawBox(svg, box, attrs) {
+  EDGES.forEach(([a, b]) => el("line", { x1: box[2 * a], y1: box[2 * a + 1], x2: box[2 * b], y2: box[2 * b + 1], ...attrs }, svg));
+}
+function renderPhoto(s) {
+  $("#photo").src = s.img;
+  paintHeatOverlay(s);
+  const svg = $("#overlay");
+  svg.innerHTML = "";
+  $("#show-truth").disabled = !s.truth.box;
+  $("#photo-note").textContent = s.kind === "real"
+    ? `Real photo (Openverse), cropped around one block. Person's note: ${s.note}. No exact corners exist for real photos.` : "";
+  if (s.truth.box && $("#show-truth").checked) {
+    drawBox(svg, s.truth.box, { stroke: "rgba(0,0,0,0.55)", "stroke-width": 3 });
+    drawBox(svg, s.truth.box, { stroke: "#fff", "stroke-width": 1.5, "stroke-dasharray": "4 3" });
+  }
+  if (s.guess.top) el("polygon", { points: quad(s.guess.top), fill: css("--accent"), "fill-opacity": 0.22, stroke: "none" }, svg);
+  drawBox(svg, s.guess.box, { stroke: css("--accent"), "stroke-width": 2, "stroke-linecap": "round" });
+  for (let i = 0; i < 8; i++) {
+    el("circle", { cx: s.guess.box[2 * i], cy: s.guess.box[2 * i + 1], r: 3, fill: css("--accent"), stroke: "#fff", "stroke-width": 1 }, svg);
+  }
+}
+function renderReadout(s) {
+  const cats = DATA.categories, known = s.truth.cat !== null, right = known && s.guess.cat === s.truth.cat;
+  $("#verdict").innerHTML = `<span class="label">${cats[s.guess.cat]}</span>` +
+    (!known ? `<span class="chip none">No label · a person couldn't tell</span>`
+      : right ? `<span class="chip good">✓ Correct</span>` : `<span class="chip bad">✗ Wrong · label is ${cats[s.truth.cat]}</span>`);
+  $("#probs").innerHTML = cats.map((c, i) => {
+    const p = s.guess.probs[i] * 100;
+    return `<div class="prob ${i === s.guess.cat ? "top" : ""}"><span>${c}</span>` +
+      `<div class="track"><div class="fill" style="width:${p}%"></div></div><span class="pct data">${fmt(p, p < 10 ? 1 : 0)}%</span></div>`;
+  }).join("");
+  const g = s.guess, t = s.truth;
+  if (!g.desc) {   // real photo: no lens or "up" direction, so no 3D pose
+    $("#measures").innerHTML = "";
+    $("#corner-err").textContent = "Real photo: we don't know this camera's lens or which way is up, so there's no 3D pose. " +
+      "Judge the blue box by eye: does it hug the middle block?";
+    return;
+  }
+  const row = (k, a, b) => `<tr><td>${k}</td><td class="data">${a}</td><td class="data">${b}</td></tr>`;
+  $("#measures").innerHTML = `<tr><th>From the 8 corners + PnP</th><th>Network</th><th>Truth</th></tr>` +
+    row("Category from 3D pose", cats[g.pose_cat], cats[t.cat]) +
+    row("Distance from camera", `${fmt(g.distance, 1)} cm`, `${fmt(t.distance, 1)} cm`) +
+    row("Top face angle", `${fmt(g.desc.angle)}°`, `${fmt(t.desc.angle)}°`) +
+    row("Top face size", `${fmt(g.desc.length)} × ${fmt(g.desc.width)} px`, `${fmt(t.desc.length)} × ${fmt(t.desc.width)} px`);
+  $("#corner-err").textContent = `3D rotation miss: ${fmt(g.rot_err, 1)}°. Average miss over the 8 box corners: ` +
+    `${fmt(g.box_err, 1)} px on a 256 × 256 picture. The shaded face is the top face PnP found.`;
+}
+
+/* ---------- picture -> idea ladder ---------- */
+const RUNG_CAPTIONS = ["edges and color changes", "corners and textures", "parts of the block", "\"a block is here\""];
+function paintMap(canvas, b64, n) {
+  const bytes = atob(b64);
+  canvas.width = n; canvas.height = n;
+  const ctx = canvas.getContext("2d"), img = ctx.createImageData(n, n);
+  for (let i = 0; i < n * n; i++) {
+    const [r, g, b] = ramp(bytes.charCodeAt(i) / 255);
+    img.data.set([r, g, b, 255], i * 4);
+  }
+  ctx.putImageData(img, 0, 0);
+}
+function renderLadder(s) {
+  const row = $("#ladder");
+  row.innerHTML = `<div class="rung"><h4>Picture</h4><span class="sub">224 × 224 pixels</span>` +
+    `<img src="${s.img}" alt="The selected picture"><span class="cap">what the camera sees</span></div>`;
+  s.ladder.forEach((L, li) => {
+    row.insertAdjacentHTML("beforeend", `<span class="step-arrow" aria-hidden="true">→</span>`);
+    const rung = document.createElement("div");
+    rung.className = "rung";
+    rung.innerHTML = `<h4>Layer ${li + 1}</h4><span class="sub">${L.size} × ${L.size} grid · ${DATA.layers[li].total} neurons</span>` +
+      `<div class="rung-maps"></div><span class="cap">${RUNG_CAPTIONS[li]}</span>`;
+    L.maps.forEach((m, k) => {
+      const c = document.createElement("canvas");
+      c.title = `Layer ${li + 1}, neuron ${L.channels[k]}`;
+      c.setAttribute("aria-label", c.title);
+      paintMap(c, m, L.size);
+      rung.querySelector(".rung-maps").appendChild(c);
+    });
+    row.appendChild(rung);
+  });
+  if (s.heat) {   // head B: back up to a fine grid, painting the corners
+    row.insertAdjacentHTML("beforeend", `<span class="step-arrow" aria-hidden="true">→</span>`);
+    const rung = document.createElement("div");
+    rung.className = "rung";
+    rung.innerHTML = `<h4>Head B</h4><span class="sub">${s.heat.size} × ${s.heat.size} heat map</span>`;
+    const c = document.createElement("canvas");
+    c.setAttribute("aria-label", "Corner heat map");
+    paintMap(c, s.heat.map, s.heat.size);
+    rung.appendChild(c);
+    rung.insertAdjacentHTML("beforeend", `<span class="cap">where the 8 box corners are</span>`);
+    row.appendChild(rung);
+  }
+}
+function paintHeatOverlay(s) {
+  const canvas = $("#heat-overlay");
+  const ctx = canvas.getContext("2d");
+  if (!s.heat || !$("#show-heat").checked) { ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
+  const n = s.heat.size, bytes = atob(s.heat.map), [r, g, b] = rgb(css("--accent"));
+  canvas.width = n; canvas.height = n;
+  const img = ctx.createImageData(n, n);
+  for (let i = 0; i < n * n; i++) img.data.set([r, g, b, Math.round(bytes.charCodeAt(i) * 0.9)], i * 4);
+  ctx.putImageData(img, 0, 0);
+}
+
+/* ---------- network diagram ---------- */
+const NET = { top: 92, bottom: 418, layerX: [205, 320, 435, 560], ansX: 690, r: 9 };
+let netParts = null;
+function spread(n, top, bottom) { return n === 1 ? [(top + bottom) / 2] : Array.from({ length: n }, (_, i) => top + (i * (bottom - top)) / (n - 1)); }
+function buildNet() {
+  const svg = $("#net");
+  svg.innerHTML = "";
+  const edges = el("g", {}, svg), nodes = el("g", {}, svg);
+  const layers = DATA.layers.map((L, li) => {
+    const n = L.channels.length;
+    const pad = n < 12 ? 22 : 0;
+    return spread(n, NET.top + pad, NET.bottom - pad).map((y) => ({ x: NET.layerX[li], y }));
+  });
+  const catY = spread(3, NET.top + 6, NET.top + 66);
+  const cornerY = spread(8, NET.top + 128, NET.bottom);
+  const answers = [...catY.map((y) => ({ x: NET.ansX, y, kind: "category" })), ...cornerY.map((y) => ({ x: NET.ansX, y, kind: "corners" }))];
+
+  // column titles
+  const title = (x, a, b) => { el("text", { x, y: 26, "text-anchor": "middle", class: "col-title" }, svg).textContent = a;
+    el("text", { x, y: 44, "text-anchor": "middle", class: "col-sub" }, svg).textContent = b; };
+  title(64, "Picture", "224 × 224 pixels");
+  DATA.layers.forEach((L, i) => title(NET.layerX[i], `Layer ${i + 1}`, `${L.channels.length} of ${L.total} neurons`));
+  title(NET.ansX + 40, "Answers", "two heads");
+  el("text", { x: NET.ansX - 14, y: catY[0] - 18, class: "col-sub" }, svg).textContent = "A · category";
+  el("text", { x: NET.ansX - 14, y: cornerY[0] - 18, class: "col-sub" }, svg).textContent = "B · heat map → corners (px)";
+
+  // picture node
+  const imgY = (NET.top + NET.bottom) / 2;
+  const pic = el("image", { x: 24, y: imgY - 40, width: 80, height: 80 }, nodes);
+  el("rect", { x: 24, y: imgY - 40, width: 80, height: 80, fill: "none", stroke: "var(--line)" }, nodes);
+
+  // edges: picture -> L1 -> L2 -> L3 -> L4 (plain), L4 -> answers (colored by contribution)
+  const line = (a, b) => el("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y, stroke: "var(--edge)", "stroke-width": 1 }, edges);
+  layers[0].forEach((p) => line({ x: 104, y: imgY }, p));
+  for (let li = 0; li < 3; li++) layers[li].forEach((a) => layers[li + 1].forEach((b) => line(a, b)));
+  const headEdges = answers.map((ans) => layers[3].map((f) => line(f, ans)));
+
+  // neuron nodes
+  const layerNodes = layers.map((pts, li) => pts.map((p, idx) => {
+    const g = el("g", { class: "net-node", tabindex: 0, role: "button" }, nodes);
+    const c = el("circle", { cx: p.x, cy: p.y, r: NET.r }, g);
+    const tip = el("title", {}, g);
+    const pick = () => { selected = { layer: li, idx }; renderNet(); renderNeuron(); };
+    g.addEventListener("click", pick);
+    g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+    return { g, c, tip };
+  }));
+  const answerNodes = answers.map((p, ai) => {
+    const g = el("g", { class: "net-node", tabindex: 0 }, nodes);
+    const c = el("circle", { cx: p.x, cy: p.y, r: NET.r }, g);
+    const label = el("text", { x: p.x + 16, y: p.y + 4, class: "ans-label" }, g);
+    const show = () => { focusAnswer = ai; renderEdges(); };
+    const hide = () => { focusAnswer = null; renderEdges(); };
+    g.addEventListener("mouseenter", show); g.addEventListener("focus", show);
+    g.addEventListener("mouseleave", hide); g.addEventListener("blur", hide);
+    return { g, c, label };
+  });
+  netParts = { pic, layerNodes, answerNodes, headEdges };
+}
+function renderNet() {
+  const s = DATA.samples[cur];
+  netParts.pic.setAttribute("href", s.img);
+  netParts.layerNodes.forEach((nodes, li) => nodes.forEach((n, idx) => {
+    const v = s.layers[li].vals[idx];
+    n.c.setAttribute("fill", rampCss(v));
+    n.g.classList.toggle("selected", selected.layer === li && selected.idx === idx);
+    n.tip.textContent = `Layer ${li + 1}, neuron ${DATA.layers[li].channels[idx]}: fired ${fmt(v * 100)}% of its strongest`;
+    n.g.setAttribute("aria-label", n.tip.textContent);
+  }));
+  netParts.answerNodes.forEach((n, ai) => {
+    if (ai < 3) {
+      const p = s.guess.probs[ai];
+      n.c.setAttribute("fill", rampCss(p));
+      n.label.textContent = `${DATA.categories[ai]} ${fmt(p * 100, p < 0.1 ? 1 : 0)}%`;
+    } else {
+      const k = ai - 3;
+      n.c.setAttribute("fill", rampCss(0.55));   // every corner always gets an answer
+      n.label.textContent = `corner ${k + 1}: ${fmt(s.guess.box[2 * k])}, ${fmt(s.guess.box[2 * k + 1])}`;
+    }
+    n.g.setAttribute("aria-label", n.label.textContent);
+  });
+  renderEdges();
+}
+function renderEdges() {
+  const s = DATA.samples[cur];
+  // when nothing is hovered, show what pushed the network's chosen category
+  const active = focusAnswer ?? s.guess.cat;
+  netParts.headEdges.forEach((list, ai) => {
+    // head B paints a heat map from the 7 x 7 maps, so only the category answers have one weight per feature
+    const w = ai < 3 ? DATA.heads.category[ai] : DATA.heads.corners?.[ai - 3];
+    if (!w) { list.forEach((line) => { line.style.stroke = "var(--edge)"; line.setAttribute("stroke-width", 1); line.removeAttribute("stroke-opacity"); }); return; }
+    const contrib = s.features.map((f, j) => w[j] * f);
+    const max = Math.max(...contrib.map(Math.abs)) || 1;
+    list.forEach((line, j) => {
+      if (ai !== active) { line.style.stroke = "var(--edge)"; line.setAttribute("stroke-width", 1); line.removeAttribute("stroke-opacity"); return; }
+      const t = Math.abs(contrib[j]) / max;
+      line.style.stroke = contrib[j] >= 0 ? "var(--pos)" : "var(--neg)";
+      line.setAttribute("stroke-opacity", (0.15 + 0.85 * t).toFixed(2));
+      line.setAttribute("stroke-width", (0.8 + 2.6 * t).toFixed(2));
+    });
+    if (ai === active) list.forEach((line) => line.parentNode.appendChild(line));   // draw on top
+  });
+}
+function renderNeuron() {
+  const s = DATA.samples[cur], L = s.layers[selected.layer];
+  const ch = DATA.layers[selected.layer].channels[selected.idx];
+  $("#neuron-photo").src = s.img;
+  const n = L.size;
+  paintMap($("#neuron-map"), L.maps[selected.idx], n);
+  const [name, text] = LAYER_INFO[selected.layer];
+  $("#neuron-title").textContent = `${name} · neuron ${ch} of ${DATA.layers[selected.layer].total}`;
+  $("#neuron-text").textContent = `${text} This neuron looks at the picture as a ${n} × ${n} grid. ` +
+    `Strong blue squares are where it fired. For this picture it fired at ${fmt(L.vals[selected.idx] * 100)}% of its strongest.`;
+}
+
+/* ---------- training charts ---------- */
+function lineChart(host, cfg) {
+  const card = document.createElement("div");
+  card.className = "card chart";
+  card.innerHTML = `<h3>${cfg.title}</h3>`;
+  host.appendChild(card);
+  const W = 320, H = 180, m = { l: 38, r: cfg.series.length > 1 ? 70 : 14, t: 10, b: 26 };
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": cfg.title }, card);
+  const hist = DATA.history, xs = hist.map((h) => h.epoch);
+  const vals = cfg.series.flatMap((s) => hist.map((h) => h[s.key] * (s.mult || 1)));
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (cfg.zero) lo = 0;
+  const pad = (hi - lo) * 0.08 || 1; hi += pad; if (!cfg.zero) lo = Math.max(0, lo - pad);
+  const x = (e) => m.l + ((e - xs[0]) / (xs[xs.length - 1] - xs[0] || 1)) * (W - m.l - m.r);
+  const y = (v) => H - m.b - ((v - lo) / (hi - lo)) * (H - m.t - m.b);
+  for (let i = 0; i <= 3; i++) {
+    const v = lo + ((hi - lo) * i) / 3;
+    el("line", { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), class: "grid" }, svg);
+    el("text", { x: m.l - 6, y: y(v) + 3, "text-anchor": "end" }, svg).textContent = cfg.fmt(v);
+  }
+  el("line", { x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b, class: "axis" }, svg);
+  xs.filter((e) => e === 1 || e % 5 === 0).forEach((e) => {
+    el("text", { x: x(e), y: H - m.b + 14, "text-anchor": "middle" }, svg).textContent = e;
+  });
+  el("text", { x: W - m.r, y: H - 2, "text-anchor": "end" }, svg).textContent = "epoch";
+  cfg.series.forEach((s) => {
+    const pts = hist.map((h) => [x(h.epoch), y(h[s.key] * (s.mult || 1))]);
+    el("polyline", { points: pts.map((p) => p.join(",")).join(" "), fill: "none", stroke: `var(${s.color})`,
+      "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+  });
+  if (cfg.series.length > 1) {   // name each line at its end, pushed apart if the ends are close
+    const h = hist[hist.length - 1];
+    const ends = cfg.series.map((s) => ({ s, y: y(h[s.key] * (s.mult || 1)) })).sort((a, b) => a.y - b.y);
+    if (ends[1].y - ends[0].y < 13) { const mid = (ends[0].y + ends[1].y) / 2; ends[0].y = mid - 6.5; ends[1].y = mid + 6.5; }
+    ends.forEach((e) => { el("text", { x: x(h.epoch) + 6, y: e.y + 3.5, class: "end-label" }, svg).textContent = e.s.label; });
+  }
+  // hover: crosshair + tooltip
+  const cross = el("line", { y1: m.t, y2: H - m.b, stroke: "var(--muted)", "stroke-dasharray": "3 3", visibility: "hidden" }, svg);
+  const dots = cfg.series.map((s) => el("circle", { r: 4, fill: `var(${s.color})`, stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" }, svg));
+  const tip = document.createElement("div");
+  tip.className = "tip"; tip.hidden = true; card.appendChild(tip);
+  const hit = el("rect", { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: "transparent" }, svg);
+  hit.addEventListener("pointermove", (ev) => {
+    const box = svg.getBoundingClientRect(), sx = ((ev.clientX - box.left) / box.width) * W;
+    let i = 0; xs.forEach((e, k) => { if (Math.abs(x(e) - sx) < Math.abs(x(xs[i]) - sx)) i = k; });
+    const h = hist[i];
+    cross.setAttribute("x1", x(h.epoch)); cross.setAttribute("x2", x(h.epoch)); cross.setAttribute("visibility", "visible");
+    cfg.series.forEach((s, k) => { dots[k].setAttribute("cx", x(h.epoch)); dots[k].setAttribute("cy", y(h[s.key] * (s.mult || 1))); dots[k].setAttribute("visibility", "visible"); });
+    tip.innerHTML = `Epoch ${h.epoch}<br>` + cfg.series.map((s) => `${s.label}: ${cfg.fmt(h[s.key] * (s.mult || 1), true)}`).join("<br>");
+    tip.hidden = false;
+    const cardBox = card.getBoundingClientRect(), left = (x(h.epoch) / W) * box.width + box.left - cardBox.left;
+    tip.style.left = `${Math.min(left + 10, cardBox.width - tip.offsetWidth - 6)}px`;
+    tip.style.top = `${box.top - cardBox.top + 6}px`;
+  });
+  hit.addEventListener("pointerleave", () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); dots.forEach((d) => d.setAttribute("visibility", "hidden")); });
+}
+function renderTraining() {
+  const host = $("#charts"), H = DATA.history;
+  host.innerHTML = "";
+  $("#train-text").textContent = `The network studied ${DATA.results.n_test * 8} rendered pictures, ${H.length} times over ` +
+    `(each pass is one "epoch"). After every epoch we quizzed it on ${DATA.results.n_test} pictures it doesn't train on (the "validation" set).`;
+  lineChart(host, { title: "Loss (lower is better)", fmt: (v, tip) => fmt(v, tip ? 3 : 2), series: [
+    { label: "train", key: "train_loss", color: "--accent" },
+    { label: "validation", key: "val_loss", color: "--series-2" }] });
+  const pose = "val_pnp_accuracy" in H[0];
+  lineChart(host, { title: "Category correct, validation", fmt: (v, tip) => `${fmt(v, tip ? 1 : 0)}%`,
+    series: pose ? [{ label: "head A", key: "val_accuracy", color: "--accent", mult: 100 },
+                    { label: "3D pose", key: "val_pnp_accuracy", color: "--series-2", mult: 100 }]
+                 : [{ label: "correct", key: "val_accuracy", color: "--accent", mult: 100 }] });
+  lineChart(host, { title: "Top-corner miss, validation (px)", fmt: (v, tip) => fmt(v, 1), zero: true,
+    series: [{ label: "corner miss", key: "val_corner_px", color: "--accent" }] });
+  if (pose) lineChart(host, { title: "3D position miss, validation (cm)", fmt: (v, tip) => fmt(v, tip ? 2 : 1), zero: true,
+    series: [{ label: "position miss", key: "val_position_cm", color: "--accent" }] });
+  $("#history").innerHTML = `<tr><th>Epoch</th><th>Train loss</th><th>Val loss</th><th>Category</th>` +
+    (pose ? `<th>From 3D pose</th>` : "") + `<th>Top-corner miss</th>` + (pose ? `<th>Position miss</th><th>Rotation miss</th>` : "") + `</tr>` +
+    H.map((h) => `<tr><td>${h.epoch}</td><td>${fmt(h.train_loss, 3)}</td><td>${fmt(h.val_loss, 3)}</td>` +
+      `<td>${fmt(h.val_accuracy * 100, 1)}%</td>` + (pose ? `<td>${fmt(h.val_pnp_accuracy * 100, 1)}%</td>` : "") +
+      `<td>${fmt(h.val_corner_px, 1)} px</td>` +
+      (pose ? `<td>${fmt(h.val_position_cm, 2)} cm</td><td>${fmt(h.val_rotation_deg, 1)}°</td>` : "") + `</tr>`).join("");
+}
+
+/* ---------- final test ---------- */
+function renderTest() {
+  const R = DATA.results, cats = DATA.categories;
+  $("#test-text").textContent = `${R.n_test} rendered pictures the network never trained on and that weren't used to pick the best epoch.`;
+  const stat = (v, k) => `<div class="card stat"><span class="v data">${v}</span><span class="k">${k}</span></div>`;
+  const pose = "pnp_accuracy" in R;
+  $("#stats").innerHTML = stat(`${fmt(R.accuracy * 100, 1)}%`, "category correct (head A)") +
+    (pose ? stat(`${fmt(R.pnp_accuracy * 100, 1)}%`, "category correct (from 3D pose)") : "") +
+    stat(`${fmt(R.corner_px, 1)} px`, "average top-corner miss (256 px picture)") +
+    (pose ? stat(`${fmt(R.position_cm, 2)} cm`, "average 3D position miss") +
+            stat(`${fmt(R.rotation_deg, 1)}°`, `average 3D rotation miss (median ${fmt(R.rotation_deg_median, 1)}°)`)
+          : stat(`${fmt(R.angle_deg, 1)}°`, "average angle miss")) +
+    (DATA.real ? stat(`${DATA.real.right} / ${DATA.real.labeled}`, "real-photo categories right") : "");
+  if (DATA.real) {
+    $("#caveat").innerHTML = `<b>Real photos: ${DATA.real.right} of ${DATA.real.labeled} categories right ` +
+      `(${fmt((DATA.real.right / DATA.real.labeled) * 100)}%), versus ${fmt(R.accuracy * 100, 1)}% on Blender pictures.</b> ` +
+      `Real photos have no exact corner labels, so pick one in "Try it" and judge the blue box yourself.`;
+  }
+  if (R.pnp_confusion) $("#confusion-text").textContent = "Category from the 3D pose. Rows are the truth, columns are the guess. The diagonal is correct.";
+  let html = `<tr><th></th>${cats.map((c) => `<th>${c}</th>`).join("")}</tr>`;
+  (R.pnp_confusion || R.confusion).forEach((row, i) => {
+    const total = row.reduce((a, b) => a + b, 0) || 1;
+    html += `<tr><th>${cats[i]}</th>` + row.map((n) => {
+      const t = n / total;
+      return `<td style="background:${rampCss(t)};color:${t > 0.55 ? "var(--surface)" : "var(--ink)"}">${n}</td>`;
+    }).join("") + "</tr>";
+  });
+  $("#confusion").innerHTML = html;
+}
+
+function render() {
+  const s = DATA.samples[cur];
+  document.querySelectorAll(".thumb").forEach((b, i) => b.setAttribute("aria-pressed", i === cur));
+  renderPhoto(s); renderReadout(s); renderLadder(s); renderNet(); renderNeuron();
+}
+function renderCredits() {
+  if (!DATA.credits || !DATA.credits.length) return;
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  $("#credit-list").innerHTML = DATA.credits.map((c) =>
+    `<li>“${esc(c.title)}” by ${esc(c.creator)}, ${esc(c.license)} · <a href="${esc(c.source)}" target="_blank" rel="noopener">source</a></li>`).join("");
+  $("#credits").hidden = false;
+}
+function renderAll() { render(); renderTraining(); renderTest(); }
+renderCredits();
+
+buildStrip();
+buildNet();
+renderAll();
+$("#show-truth").addEventListener("change", () => renderPhoto(DATA.samples[cur]));
+$("#show-heat").addEventListener("change", () => renderPhoto(DATA.samples[cur]));
+// repaint when the viewer switches light/dark
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", renderAll);
+new MutationObserver(renderAll).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+</script>

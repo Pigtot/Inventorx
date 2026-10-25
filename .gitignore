@@ -1,0 +1,13 @@
+# Python build junk
+__pycache__/
+*.pyc
+
+# OS / OneDrive junk
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*
+
+# Virtual environments (ours lives in ~/venvs/xarm, but just in case)
+venv/
+.venv/
