@@ -33,8 +33,7 @@ We worked three days this week.
 
 - `02_first_move.py` (lift the tool 50 mm and back down) on the real arm
 - `05_teach_mode.py` (move the arm by hand) on the real arm
-- Opening and closing the gripper from VR. The 1:23 pm video shows the gripper set to "closed" over the blocks, but we can't tell from it whether it grabbed one.
-- Picking up a Jenga block using VR control
+- Picking up a Jenga block using VR control. In the 1:23 pm video the gripper is set to closed above the blocks, but you can't tell if it picked one up.
 - The newest VR features: the on-screen display (HUD), controller shake, and camera calibration. See the [VR teleop manual](Lesson05_VR_Teleop_Manual.md).
 - The Jenga program on our own blocks with our own camera
 - Training SmolVLA on our own examples, and whether our graphics card's 12 GB of memory is enough
