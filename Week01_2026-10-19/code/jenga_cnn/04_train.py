@@ -5,6 +5,7 @@
 Then PnP turns the 8 corners into the block's 3D position and rotation, and the rotation
 tells us flat / side / standing a second way, from geometry alone. We score two PnP versions:
 "free" (any 3D rotation) and "on the table" (the block rests on a face, so only its spin is free).
+Final pose = head A picks the face, then PnP on the table finds the spin and position (this worked best).
 
 Run it like this (about 15 minutes per 4,000 pictures on the M1 Max):
     ~/venvs/vision/bin/python 04_train.py
@@ -119,8 +120,10 @@ def evaluate(model, d, idx):
         free_rvec, _ = solve_pose(px, K)                                # free PnP: any 3D rotation
         free_cats.append(CATEGORIES.index(category_from_pose(free_rvec, d["up"][i])))
         free_rot.append(rotation_error_deg(free_rvec, d["rot"][i]))
-        cat, rvec, tvec, _ = solve_pose_on_table(px, K, d["up"][i])     # knows the block lies on the table
+        cat, _, _, _ = solve_pose_on_table(px, K, d["up"][i])           # geometry alone picks the face
         pnp_cats.append(CATEGORIES.index(cat))
+        head_cat = CATEGORIES[int(scores[j].argmax())]                  # final pose: head A picks the face,
+        _, rvec, tvec, _ = solve_pose_on_table(px, K, d["up"][i], only=[head_cat])   # PnP finds spin + position
         pos_err.append(np.linalg.norm(tvec - d["pos"][i]))
         rot_err.append(rotation_error_deg(rvec, d["rot"][i]))
         tops.append(clockwise(px[top_face(rvec, tvec, d["up"][i])]))   # the network's 4 top corners
@@ -205,6 +208,7 @@ def main():
     if "--test-only" in sys.argv:              # skip training: load the saved network and its test pictures
         ckpt = torch.load(MODEL_PATH, map_location="cpu")
         best_weights, history = ckpt["weights"], ckpt["history"]
+        history_note = ckpt["results"].get("history_note", "During training, the 3D pose was scored with free PnP.")
         where = {f: i for i, f in enumerate(d["files"])}
         test = [where[f] for f in ckpt["test_files"]]
     for epoch in range(1, EPOCHS + 1) if "--test-only" not in sys.argv else []:
@@ -247,16 +251,18 @@ def main():
                    width_px=sum(abs(g["width"] - c["width"]) for g, c in sizes) / len(sizes),
                    confusion=confusion_of(d["categories"][test], t["predicted"]),
                    pnp_confusion=confusion_of(d["categories"][test], t["pnp_predicted"]), n_test=len(test))
+    if "--test-only" in sys.argv:
+        results["history_note"] = history_note
     print("\nTEST RESULTS (images the network never saw):")
-    print(f"  category correct: head A {results['accuracy']:.1%}, from 3D pose {results['pnp_accuracy']:.1%} "
-          f"(free PnP {results['free_pnp_accuracy']:.1%})")
+    print(f"  category correct: head A {results['accuracy']:.1%}; from 3D geometry alone: on the table "
+          f"{results['pnp_accuracy']:.1%}, free PnP {results['free_pnp_accuracy']:.1%}")
     print(f"  top-corner miss:  {results['corner_px']:.1f} px (on a 256 px picture); all 8 corners {results['box_px']:.1f} px")
     print(f"  angle miss:       {results['angle_deg']:.1f} deg")
     print(f"  3D position miss: {results['position_cm']:.2f} cm (median {results['position_cm_median']:.2f})")
     print(f"  3D rotation miss: {results['rotation_deg']:.1f} deg (median {results['rotation_deg_median']:.1f}; "
           f"free PnP median {results['free_rotation_deg_median']:.1f})")
     print("  confusion, head A   (rows = truth, columns = guess, flat/side/standing):", results["confusion"])
-    print("  confusion, 3D pose:", results["pnp_confusion"])
+    print("  confusion, 3D geometry alone:", results["pnp_confusion"])
 
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     torch.save(dict(weights=best_weights, categories=CATEGORIES, history=history, results=results,

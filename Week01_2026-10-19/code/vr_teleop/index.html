@@ -5,14 +5,25 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>xArm VR Teleop</title>
 <style>
-  body { font-family: system-ui, sans-serif; background: #12161c; color: #e8eef5; max-width: 44em; margin: 2em auto; padding: 0 1em; }
-  button { font-size: 1.2em; padding: 0.5em 1em; }
-  pre { background: #0b0e12; padding: 0.8em 1em; border-radius: 6px; font-size: 1.05em; }
-  #camview, #simview { display: block; max-width: 100%; max-height: 60vh; background: #0b0e12; border-radius: 6px; }
+  body { font-family: "Segoe UI", system-ui, sans-serif; background: #04080d; color: #d9f4ff; max-width: 70em; margin: 2em auto; padding: 0 1em; }
+  h1, h2 { color: #4fd8ff; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; text-shadow: 0 0 10px rgba(79, 216, 255, 0.5); }
+  b { color: #4fd8ff; }
+  button { font-size: 1.05em; padding: 0.5em 1em; background: rgba(79, 216, 255, 0.08); color: #4fd8ff;
+           border: 1px solid #4fd8ff; border-radius: 3px; cursor: pointer; letter-spacing: 0.05em; }
+  button:hover { background: rgba(79, 216, 255, 0.2); box-shadow: 0 0 10px rgba(79, 216, 255, 0.4); }
+  button:disabled { color: #4a6470; border-color: #4a6470; background: none; box-shadow: none; }
+  pre { background: #06111a; border: 1px solid rgba(79, 216, 255, 0.3); padding: 0.8em 1em; font-size: 1em; color: #9fe9ff; }
+  #camview, #simview { display: block; max-width: 100%; max-height: 70vh; background: #04070b; border: 1px solid rgba(79, 216, 255, 0.35); }
+  #camview { cursor: crosshair; }
   .views { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
-  .views figure { margin: 0; flex: 1 1 300px; }
-  .views figcaption { color: #8d9aa8; font-size: 0.9em; margin-top: 4px; }
+  .views figure { margin: 0; }
+  .views figure:first-child { flex: 3 1 480px; }
+  .views figure:last-child { flex: 2 1 320px; }
+  .views figcaption, .hint { color: #6fa8bd; font-size: 0.9em; margin-top: 4px; }
+  ol.steps li { margin: 0.4em 0; }
+  #calmsg { color: #ffb347; }
 </style>
+<script src="hud.js"></script>
 <script type="importmap">{ "imports": { "three": "./lib/three.module.js" } }</script>
 <script type="module" src="sim.js"></script>
 </head>
@@ -28,12 +39,23 @@ Press <b>B</b> to turn the camera picture a quarter turn (it's remembered).</p>
 <p id="msg"></p>
 <h2>Live views</h2>
 <div class="views">
-  <figure><canvas id="camview" width="640" height="440"></canvas><figcaption>D435 camera</figcaption></figure>
-  <figure><canvas id="simview" width="640" height="440"></canvas><figcaption>3D twin (official CAD, live joint angles; blue dot = where the arm is heading)</figcaption></figure>
+  <figure><canvas id="camview" width="960" height="540"></canvas><figcaption>D435 HUD · reticle = where the gripper will land</figcaption></figure>
+  <figure><canvas id="simview" width="640" height="440"></canvas><figcaption>3D twin (official CAD, live joint angles; dot = where the arm is heading)</figcaption></figure>
 </div>
 <p><button id="camrec">Record D435 view</button>
    <button id="rec">Record headset mirror (optional)</button></p>
 <pre id="stats">Not in VR yet.</pre>
+
+<h2>Camera calibration</h2>
+<p class="hint">Finds exactly where the D435 sits on the gripper, so the HUD can show where the gripper will land.
+Two people: the operator drives the arm in VR, the spotter clicks here. Do it once (it's saved); redo it if the camera mount moves.</p>
+<ol class="steps">
+  <li>Put a small dot (pen mark or sticker) on the table in front of the arm.</li>
+  <li>Drive the gripper tip down until it <b>just touches</b> the dot, then: <button id="caltouch">Record touch</button></li>
+  <li>Lift the arm. From <b>4 or more different spots</b> (change the height and the turn), let go, then <b>click the dot</b> in the live view above.</li>
+  <li><button id="calsolve">Solve</button> &nbsp; <button id="calreset">Start over</button></li>
+</ol>
+<p id="calmsg"></p>
 
 <script>
 const SCREEN_SIZE = 1.0;       // meters along the camera screen's long side
@@ -132,12 +154,18 @@ function infoLines(info, pcOk) {
 }
 function drawPanel(lines) {
   const c = panel.getContext("2d");
-  c.fillStyle = "#0f141c";
+  c.fillStyle = "#06111a";
   c.fillRect(0, 0, panel.width, panel.height);
-  c.fillStyle = "#e8eef5";
-  c.font = "bold 42px system-ui, sans-serif";
+  c.strokeStyle = "#4fd8ff";   // HUD style: thin glowing cyan frame and text
+  c.shadowColor = "#4fd8ff";
+  c.shadowBlur = 10;
+  c.lineWidth = 3;
+  c.strokeRect(6, 6, panel.width - 12, panel.height - 12);
+  c.fillStyle = "#4fd8ff";
+  c.font = "600 40px 'Segoe UI', system-ui, sans-serif";
   c.fillText(lines[0], 32, 58);
-  c.fillStyle = "#b9c6d4";
+  c.shadowBlur = 0;
+  c.fillStyle = "#9fe9ff";
   c.font = "30px Consolas, ui-monospace, monospace";
   lines.slice(1).forEach((line, i) => c.fillText(line, 32, 116 + i * 52));   // 4 lines below the title
 }
@@ -161,14 +189,13 @@ async function cameraLoop() {
 }
 cameraLoop();
 
-// ---- D435 live view on this page: the same picture (and turn) as in VR, with a strip of live coordinates. ----
+// ---- HUD live view (hud.js): the D435 picture with the Iron Man-style overlay. Shown here, in VR, and recorded. ----
 const view = document.getElementById("camview"), viewCtx = view.getContext("2d");
-const STRIP = 80;   // pixels of text strip under the picture
+const HUD_LONG = 960, HUD_SHORT = 540;   // HUD canvas size (pixels); a quarter turn swaps them
 const raw = document.createElement("canvas");   // the camera picture, un-turned
-let rawPixels = null, drawnNumber = 0;
+let rawPixels = null, drawnNumber = 0, hudVersion = 0;
 function drawLiveView() {
-  if (!cam.pixels) return;
-  if (cam.number !== drawnNumber) {   // copy a NEW picture into `raw` (RGB -> RGBA)
+  if (cam.pixels && cam.number !== drawnNumber) {   // copy a NEW picture into `raw` (RGB -> RGBA)
     drawnNumber = cam.number;
     if (raw.width !== cam.width || raw.height !== cam.height) {
       [raw.width, raw.height] = [cam.width, cam.height];
@@ -180,31 +207,37 @@ function drawLiveView() {
     }
     raw.getContext("2d").putImageData(rawPixels, 0, 0);
   }
-  const [iw, ih] = turns % 2 ? [cam.height, cam.width] : [cam.width, cam.height];   // size after turning
-  if (camRecorder?.state !== "recording" && (view.width !== iw || view.height !== ih + STRIP)) {
-    [view.width, view.height] = [iw, ih + STRIP];   // never resize in the middle of a recording
+  const [W, H] = turns % 2 ? [HUD_SHORT, HUD_LONG] : [HUD_LONG, HUD_SHORT];
+  if (camRecorder?.state !== "recording" && (view.width !== W || view.height !== H)) {
+    [view.width, view.height] = [W, H];   // never resize in the middle of a recording
   }
-  const c = viewCtx, areaH = view.height - STRIP;
-  c.fillStyle = "#0b0e12";
-  c.fillRect(0, 0, view.width, view.height);
-  const s = Math.min(view.width / iw, areaH / ih);   // fit the picture in its area
-  c.save();
-  c.translate(view.width / 2, areaH / 2);
-  c.rotate(turns * Math.PI / 2);   // same quarter turns as in VR (clockwise)
-  c.scale(s, s);
-  c.drawImage(raw, -cam.width / 2, -cam.height / 2);
-  c.restore();
-  const lines = infoLines(info, pcOk);
-  const size = Math.max(11, Math.round(view.width / 42));
-  c.fillStyle = "#e8eef5";
-  c.font = `bold ${size + 2}px system-ui, sans-serif`;
-  c.fillText(lines[0] || "Live view (not in VR)", 10, areaH + size + 10);
-  c.fillStyle = "#b9c6d4";
-  c.font = `${size}px Consolas, ui-monospace, monospace`;
-  c.fillText(`${lines[1]}   ${info.gripper ? "Gripper " + info.gripper.toUpperCase() : ""}`, 10, areaH + 2 * size + 22);
-  c.fillText(new Date().toLocaleTimeString(), view.width - 9 * size, areaH + size + 10);
+  drawHUD(viewCtx, view.width, view.height, cam.pixels ? raw : null, cam.width || 640, cam.height || 360,
+          turns, info, pcOk, performance.now());
+  hudVersion++;
 }
-setInterval(drawLiveView, 33);   // 30 times a second (keeps going even while the headset is in VR)
+
+// ---- Calibration: buttons, and clicking the dot in the live view. ----
+const calMsg = document.getElementById("calmsg");
+async function calibStep(step, body = {}) {
+  try {
+    const res = await fetch("/calib/" + step, { method: "POST", body: JSON.stringify(body) });
+    calMsg.textContent = (await res.json()).say;
+  } catch { calMsg.textContent = "The PC program isn't answering."; }
+}
+document.getElementById("caltouch").onclick = () => calibStep("touch");
+document.getElementById("calsolve").onclick = () => calibStep("solve");
+document.getElementById("calreset").onclick = () => calibStep("reset");
+view.onclick = (e) => {
+  if (!info.calib?.dot) return (calMsg.textContent = "First touch the dot and press Record touch.");
+  const r = view.getBoundingClientRect();   // the canvas may be shown smaller than its real size
+  const px = (e.clientX - r.left) * view.width / r.width, py = (e.clientY - r.top) * view.height / r.height;
+  const [u, v] = hudTransform(view.width, view.height, cam.width || 640, cam.height || 360, turns).toCam(px, py);
+  calibStep("click", { u, v });
+};
+// 30 times a second. In VR the VR frame loop draws it instead: Chrome slows timers in a tab it thinks is in the
+// background (down to once a minute), which would freeze the camera screen in the headset.
+let inVR = false;
+setInterval(() => { if (!inVR) drawLiveView(); }, 33);
 // Read-only coordinates for the live view (this page never sends hand data except from inside VR).
 setInterval(() => {
   fetch("/status").then((res) => res.json()).then(setInfo).catch(() => (pcOk = false));
@@ -238,7 +271,10 @@ vrBtn.onclick = async () => {
   const screen = makeScreen(gl);
   const camTexture = makeTexture(gl), panelTexture = makeTexture(gl), simTexture = makeTexture(gl);
   let lastSim = 0, hasSim = false;
-  let sending = false, lastSent = 0, hasPicture = false, shownNumber = 0, bWasDown = false;
+  let sending = false, lastSent = 0, hasPicture = false, shownHud = 0, bWasDown = false;
+  let leftSource = null, rightSource = null, lastBuzz = 0, lastHum = 0, wasHolding = false, wasArmed = false;
+  let lastHudDraw = 0;
+  inVR = true;
   let clicks = 0, triggerWasDown = false;   // left trigger clicks; the PC flips the gripper on each new one
   let armClicks = 0, aWasDown = false;      // A presses; the PC arms/disarms motion on each new one
   let lastPanel = 0, statsText = "";
@@ -249,11 +285,13 @@ vrBtn.onclick = async () => {
     for (const source of session.inputSources) {
       if (!source.gamepad) continue;
       if (source.handedness === "left") {
+        leftSource = source;
         const trigger = source.gamepad.buttons[0]?.pressed ?? false;   // button 0 = the trigger
-        if (trigger && !triggerWasDown) clicks++;   // count one click per press, not per frame
+        if (trigger && !triggerWasDown) { clicks++; buzz(source, 0.3, 30); }   // one click per press, with a small tick
         triggerWasDown = trigger;
       }
       if (source.handedness !== "right" || !source.gripSpace) continue;
+      rightSource = source;
       const pose = frame.getPose(source.gripSpace, space);
       if (pose) {
         const p = pose.transform.position;   // meters: x = right, y = up, -z = forward
@@ -274,13 +312,31 @@ vrBtn.onclick = async () => {
     gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
     gl.clearColor(0.05, 0.06, 0.08, seeThrough ? 0 : 1);   // see-through: clear = show the real room
     gl.clear(gl.COLOR_BUFFER_BIT);
-    // Copy a camera picture to the graphics card only when a NEW one has arrived.
-    if (cam.pixels && cam.number !== shownNumber) {
+    // Redraw the HUD here (about 30 times a second), then copy it to the graphics card.
+    if (time - lastHudDraw > 33) {
+      lastHudDraw = time;
+      drawLiveView();
+    }
+    if (hudVersion !== shownHud) {
       gl.bindTexture(gl.TEXTURE_2D, camTexture);
-      if (!hasPicture) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, cam.width, cam.height, 0, gl.RGB, gl.UNSIGNED_BYTE, cam.pixels);
-      else gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cam.width, cam.height, gl.RGB, gl.UNSIGNED_BYTE, cam.pixels);   // reuse the same memory: faster
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, view);
       hasPicture = true;
-      shownNumber = cam.number;
+      shownHud = hudVersion;
+    }
+    // Force feedback: shake the controllers about 10 times a second.
+    if (time - lastBuzz > 100) {
+      lastBuzz = time;
+      const following = info.status === "following";
+      let push = 0;
+      if (following && info.limit) push = 0.55;   // pushing against a safety wall
+      if (following && info.landing && info.landing[2] < 40) {   // closing in on a surface: stronger as it gets closer
+        push = Math.max(push, 0.15 + 0.6 * (1 - info.landing[2] / 40));
+      }
+      if (push) buzz(rightSource, push, 110);
+      if (info.holding && !wasHolding) buzz(leftSource, 1.0, 160);   // the gripper just closed on something: a "clunk"
+      else if (info.holding && time - lastHum > 400) { lastHum = time; buzz(leftSource, 0.12, 80); }   // light hum = weight
+      wasHolding = !!info.holding;
+      if (!!info.motion !== wasArmed) { wasArmed = !!info.motion; buzz(rightSource, 0.4, 60); }   // tick when A arms/disarms
     }
     // Redraw the info panel about 10 times a second.
     if (time - lastPanel > 100) {
@@ -301,8 +357,8 @@ vrBtn.onclick = async () => {
     // Draw the pictures once for each eye: camera in the middle, twin to its right, info panel below.
     const viewer = frame.getViewerPose(space);
     if (viewer) {
-      const long = SCREEN_SIZE, short = hasPicture ? SCREEN_SIZE * cam.height / cam.width : SCREEN_SIZE * 9 / 16;
-      const [w, h] = turns % 2 ? [short, long] : [long, short];   // a quarter turn makes the camera screen tall
+      const shape = view.width / view.height;   // the HUD is already turned, so just match its shape
+      const [w, h] = shape >= 1 ? [SCREEN_SIZE, SCREEN_SIZE / shape] : [SCREEN_SIZE * shape, SCREEN_SIZE];
       const panelY = SCREEN_HEIGHT - h / 2 - 0.03 - PANEL_H / 2;   // just below the camera screen
       const simH = SCREEN_SIZE * 9 / 16, simW = simH * 640 / 440;    // twin screen, same height as a wide camera screen
       const simX = w / 2 + 0.04 + simW / 2;                          // just right of the camera screen
@@ -311,7 +367,7 @@ vrBtn.onclick = async () => {
         gl.viewport(vp.x, vp.y, vp.width, vp.height);
         gl.uniformMatrix4fv(screen.projection, false, view.projectionMatrix);
         gl.uniformMatrix4fv(screen.view, false, view.transform.inverse.matrix);
-        if (hasPicture) drawPicture(gl, screen, camTexture, w, h, SCREEN_HEIGHT, turns);
+        if (hasPicture) drawPicture(gl, screen, camTexture, w, h, SCREEN_HEIGHT, 0);
         if (hasSim) drawPicture(gl, screen, simTexture, simW, simH, SCREEN_HEIGHT, 0, simX);
         drawPicture(gl, screen, panelTexture, PANEL_W, PANEL_H, panelY, 0);
       }
@@ -332,11 +388,21 @@ vrBtn.onclick = async () => {
     cam.count = 0;
   }, 1000);
   session.onend = () => {
+    inVR = false;
     clearInterval(showStats);
     msg.textContent = "Left VR.";
     if (recorder?.state === "recording") recorder.stop();   // leaving VR also stops the recording
   };
 };
+
+// Shake a controller: strength 0-1 for `ms` milliseconds (uses whichever rumble the browser offers).
+function buzz(source, strength, ms) {
+  const pad = source?.gamepad;
+  if (!pad) return;
+  const motor = pad.hapticActuators?.[0];
+  if (motor?.pulse) motor.pulse(strength, ms)?.catch?.(() => {});
+  else pad.vibrationActuator?.playEffect?.("dual-rumble", { duration: ms, strongMagnitude: strength, weakMagnitude: strength })?.catch?.(() => {});
+}
 
 function drawPicture(gl, screen, texture, width, height, y, quarterTurns, x = 0) {
   gl.bindTexture(gl.TEXTURE_2D, texture);

@@ -3,12 +3,12 @@
 **Teleop** (teleoperation) means you move your hand and the robot arm copies you.
 This manual is how we run it: you wear the Quest Pro, hold the **right grip**, and the xArm's tool follows your hand. The D435 camera's picture floats in front of you in VR.
 
-**Status (2026-10-25, later):** version 4 drove the real arm smoothly, including turning the gripper with a hand twist, with no errors. Version 5 also works on the real arm: the A button arms and disarms motion, and the 3D twin follows the arm.
+**Status (2026-10-25, later):** version 4 drove the real arm smoothly, including turning the gripper with a hand twist, with no errors. Version 5 also works on the real arm: the A button arms and disarms motion, and the 3D twin follows the arm. The HUD (E2), force feedback (E3), and camera calibration (H) were added after the last session: **not tested yet** on the real arm.
 
 **Earlier:** the first version moved the real arm with the headset. During that test the arm reported an error, which switched it out of teleop mode. After that, the moves piled up in a queue, so **the arm lagged and kept moving after we let go**. Version 2 fixes this: it stops the instant you let go and quits on any arm error. Version 2 passed fake-hand tests on the PC; **not tested yet** on the real arm.
 This replaces the Wi-Fi plan in Lesson 2 (Parts B and E): school Wi-Fi doesn't work for this, so **everything is connected by cable.**
 
-Code: [`code/vr_teleop/`](code/vr_teleop/): `vr_teleop.py` (the program), `index.html` (the VR page), `sim.js` (the 3D twin), `meshes/` (UFACTORY's official xArm 6 and gripper CAD parts, from the `xArm-Developer/xarm_ros2` GitHub repository), and `lib/` (three.js 0.160.0, the 3D library).
+Code: [`code/vr_teleop/`](code/vr_teleop/): `vr_teleop.py` (the program), `index.html` (the VR page), `sim.js` (the 3D twin), `hud.js` (the HUD), `calib.py` (the camera calibration math), `meshes/` (UFACTORY's official xArm 6 and gripper CAD parts, from the `xArm-Developer/xarm_ros2` GitHub repository), and `lib/` (three.js 0.160.0, the 3D library).
 
 ---
 
@@ -121,6 +121,26 @@ To make a long trip: grip, reach, let go, bring your hand back, and grip again.
 4. Go down slowly. Near the table the arm slows to 50 mm/s on its own.
 5. Close the gripper (left trigger), then lift.
 
+### E2. The HUD (heads-up display)
+The camera picture has an Iron Man-style overlay (in VR, on the PC page, and in recordings):
+- **Landing reticle:** the spinning cyan ring marks **exactly where the gripper will touch down**, with `LAND ↓ 42 mm` = how far the gripper tip is above that spot. It turns white when closer than 40 mm and amber while holding a block. It needs the camera calibration (section H). Until then a dashed ring says `CALIBRATE CAMERA`.
+- **Small diamond:** the gripper tip itself, if it's in the picture.
+- **Left ladder:** the tool's height from the floor limit (amber line) up to the ceiling.
+- **Right:** gripper opening (%) and the turn compass.
+- **Bottom bar:** X, Y, Z, the 6 joint angles, and MOTION ARMED or SAFE.
+- **Amber warnings:** the limit you're pushing against, or `PC LINK LOST`.
+
+### E3. Force feedback (controller shake)
+The arm has no force sensor, so the controllers *simulate* force from what the program knows:
+
+| You feel | Which hand | Meaning |
+|---|---|---|
+| Steady buzz | right | You're pushing the arm against a safety limit (a "virtual wall"). |
+| Buzz that grows stronger | right | The gripper is within 40 mm of a surface below it (from the depth camera). Stronger = closer. |
+| Strong "clunk" | left | The gripper just closed on something. |
+| Light hum every ~0.4 s | left | The gripper is holding something. |
+| Short tick | left / right | Gripper click registered / motion armed or disarmed. |
+
 ### F. Recording (optional)
 **Record the D435 live view (easiest):** the PC page shows the camera live under **"D435 live view"**. It uses the same turn as in VR, with a strip of status, X/Y/Z, gripper state, and the time.
 1. Click **Record D435 view**. It works in or out of VR.
@@ -140,6 +160,24 @@ To make a long trip: grip, reach, let go, bring your hand back, and grip again.
 1. Let go of the grip.
 2. In the PowerShell window press **Ctrl + C**. The program puts the arm's safety settings back the way it found them, and the arm holds still. (The gripper stays as it is, so it won't drop a block.)
 3. Take off the headset.
+
+### H. Camera calibration (do once; redo if the camera mount moves)
+The D435 is bolted beside the gripper, not in its center, so the picture's middle is **not** where the gripper lands. Calibration measures exactly where the camera sits and how it's turned relative to the gripper tip. It's saved in `code/vr_teleop/camera_calibration.json`.
+
+**How the math works:**
+1. Touching a dot with the gripper tip tells us where the dot is in the **arm's** coordinates.
+2. Each time you click the dot in the picture, the depth camera turns pixel + depth into the dot's 3D spot in **camera** coordinates. The arm's pose tells us where the same dot is in **gripper** coordinates.
+3. With 4 or more of these pairs, the **Kabsch method** finds the one rotation and shift that best line up the camera's numbers with the gripper's. That rotation and shift *is* the camera's position on the gripper.
+4. After that, the program follows the gripper's straight-down line until the depth camera says it hits a surface. That's the landing reticle.
+
+On made-up test data with realistic errors, this found the camera's position within about 2 mm and its angle within half a degree.
+
+**Steps (two people: operator in VR, spotter at the PC page):**
+1. Put a small dot (pen mark or sticker) on the table in front of the arm.
+2. Operator: drive the gripper tip down until it **just touches** the dot. Spotter: click **Record touch**.
+3. Operator: lift up and let go. Spotter: **click the dot** in the HUD picture on the PC page.
+4. Repeat step 3 from at least 4 different spots. Change the **height** (about 100–300 mm above the table) and the **turn** each time.
+5. Spotter: click **Solve**. A fit error **under 5 mm** is good. If it's higher, click **Start over** and click more carefully.
 
 ---
 

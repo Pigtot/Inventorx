@@ -19,7 +19,7 @@ const canvas = document.getElementById("simview");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
 renderer.setSize(canvas.width, canvas.height, false);
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0b0e12);
+scene.background = new THREE.Color(0x04070b);   // HUD look: near-black blue with cyan lines
 // Camera: behind and to the right of the arm, about where the operator stands. The arm's z is "up".
 const camera = new THREE.PerspectiveCamera(40, canvas.width / canvas.height, 0.01, 10);
 camera.up.set(0, 0, 1);
@@ -29,7 +29,7 @@ scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.3));
 const sun = new THREE.DirectionalLight(0xffffff, 1.6);
 sun.position.set(1, -1, 2);
 scene.add(sun);
-const floorGrid = new THREE.GridHelper(1.4, 14, 0x55606c, 0x2a313a);
+const floorGrid = new THREE.GridHelper(1.4, 14, 0x4fd8ff, 0x12404f);
 floorGrid.rotation.x = Math.PI / 2;   // GridHelper lies in x-z; turn it into the arm's x-y floor
 floorGrid.position.z = FLOOR;
 scene.add(floorGrid);
@@ -65,7 +65,7 @@ JOINTS.forEach((j, i) => {
 addPart("gripper_base", spins[5], dark);   // the xArm Gripper bolts straight onto link6
 
 // Blue dot: where the arm is heading (shown only while you hold the grip).
-const targetDot = new THREE.Mesh(new THREE.SphereGeometry(0.012, 16, 12), new THREE.MeshBasicMaterial({ color: 0x5aa9ff }));
+const targetDot = new THREE.Mesh(new THREE.SphereGeometry(0.012, 16, 12), new THREE.MeshBasicMaterial({ color: 0x4fd8ff }));
 targetDot.visible = false;
 scene.add(targetDot);
 

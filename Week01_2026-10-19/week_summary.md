@@ -1,77 +1,91 @@
-# Week 1 (Oct 19 – Oct 25, 2026)
+# Week 1: Oct 19 – 25, 2026
 
-We worked three days: **Friday** (set up and learned the basics), **Saturday** (trained a Jenga-block detector on fake pictures), and **Sunday** (connected the real arm and camera, then drove the arm in VR).
+We worked three days this week.
 
-## Top 3 things learned (the 20% that mattered)
-1. **For live control, the arm must chase your *latest* hand position, not work through a list.** In normal mode the arm finishes every target in its queue, so our first VR test lagged and kept moving after we let go. Mode 7 replaces the old target with each new one, so letting go really means stop.
-2. **Fake training pictures only help if they look like the real thing.** The Jenga network scored 98% on Blender pictures and still failed on real photos, because real photos have many blocks crowded together. Test on real data early.
-3. **For a VLA, the data is 80% of the result.** SmolVLA runs on our PC, but out of the box it only knows a different robot arm. It learns *our* arm, camera, and table from about 50 good demonstrations.
+- **Friday:** Set up this notebook, installed the arm's Python library, and wrote the first three lessons.
+- **Saturday:** Trained a program to find Jenga blocks in pictures. We had no hardware, so it learned from fake pictures made in Blender (a 3D art program).
+- **Sunday:** Connected the real arm and camera to the Windows PC, then controlled the arm with the VR headset.
 
-## Scoreboard: what works, what was tested
-✅ = works on the real hardware · 🖥️ = works, but only on the computer · ❌ = didn't work · ⬜ = not tested yet
+## What we learned
 
-| Thing | Status | What happened |
+1. **Live control needs the right arm mode.** In its normal mode, the arm lines up every target it gets and finishes them one by one. The headset sends about 30 targets a second, so the arm fell behind and kept moving after we let go. In mode 7, each new target replaces the old one, so the arm stops when you stop.
+2. **Test on real photos early.** Our Jenga program scored 98% on Blender pictures but got only 8 of 18 real photos right. Real photos have many blocks crowded together, and our Blender pictures didn't.
+3. **The AI model needs our own examples.** SmolVLA is an AI that looks at a camera picture, reads an instruction, and decides how the arm should move. It runs on our PC, but it was trained on a different, smaller arm. To work on ours, it needs about 50 recorded examples of our arm doing the task.
+
+## What works
+
+| What | Does it work? | Notes |
 |---|---|---|
-| PC ↔ arm over the Ethernet cable | ✅ | The arm answered at 192.168.1.217 (firmware v2.5.1) |
-| `01_hello_arm.py` (read the arm's position) | ✅ | Read all 6 joint angles from the Windows PC |
-| `02_first_move.py` (lift 50 mm and back) | ⬜ | No result written down |
-| `05_teach_mode.py` (push the arm by hand) | ⬜ | Written, but no result written down |
-| D435 camera (`03_d435_snapshot.py`) | ✅ | Color and depth pictures saved over USB 3.2 |
-| Gripper reports its position | ✅ | 840 of 850 (almost wide open) |
-| Gripper opens and closes from VR | ⬜ | No result written down |
-| VR teleop, version 1 | ❌ | Moved the arm, but lagged and **kept moving after we let go** |
-| VR teleop, version 2 | 🖥️ | Passed fake-hand tests on the PC only |
-| VR teleop, version 4 | ✅ | Drove the real arm smoothly, including gripper twist, no errors |
-| VR teleop, version 5 (current) | ✅ | Works on the real arm. A button turns motion on and off, and the 3D twin follows the arm. |
-| Grabbing a Jenga block with teleop | ⬜ | Not tried yet |
-| Quest Pro on the Link cable | ✅ but drops | Works, but dropped every 1–4 min while USB power saving was on. Not confirmed yet whether turning power saving off fixed it. |
-| Quest over school Wi-Fi / Air Link | ❌ | Doesn't work, so we connect everything by cable now |
-| Recording videos to `media/` | ✅ | 6 headset videos and 1 D435 video saved |
-| SmolVLA (AI model) runs | 🖥️ | Predicts 50 moves in about 1.1 s on the RTX 5070 Ti, but the numbers are for a different arm. **Never sent to our arm.** |
-| Fine-tuning SmolVLA on our demos | ⬜ | Need demos first |
-| Jenga CNN v1 (one block per picture) | 🖥️ | 98.3% correct on Blender pictures. Real photos: 8 of 18. |
-| Jenga CNN v2 (crowded scenes) | 🖥️ | Real photos: corners good on 12 of 21, but it overfit |
-| Jenga CNN v3 (3D box + 3D position) | 🖥️ | About 95% correct on Blender pictures, about 3.3 cm 3D position miss, overfitting mostly fixed |
-| Jenga CNN on our own blocks and camera | ⬜ | Not tried yet |
-| Notebook on GitHub | ✅ | github.com/Pigtot/Inventorx |
+| PC talks to the arm over an Ethernet cable | Yes | The arm is at 192.168.1.217 |
+| Reading the arm's joint angles | Yes | `01_hello_arm.py` |
+| D435 camera takes color and depth pictures | Yes | `03_d435_snapshot.py` |
+| Gripper reports its position | Yes | 840 out of 850, almost fully open |
+| Controlling the arm with the VR headset | Yes | Version 5. The A button turns motion on and off. The last session (1:23 pm video, almost 7 minutes) was on the real arm. |
+| Camera calibration math | On the computer only | On made-up test data, it found where the camera sits within about 2 mm and half a degree. Not done on the real arm yet. |
+| Quest Pro connected to the PC by Link cable | Partly | It dropped every 1–4 minutes. We turned off USB power saving but haven't checked if that fixed it. |
+| Quest Pro over school Wi-Fi | No | School Wi-Fi blocks it, so we use cables |
+| Recording videos | Yes | 8 videos so far (see below) |
+| SmolVLA runs on the PC | On the computer only | Its answers are for a different arm, so we never sent them to ours |
+| Jenga program on Blender pictures | On the computer only | Version 3 gets the block's type right 94% of the time and its position within about 1 cm |
+| Jenga program on real photos | Not yet | It finds the right block in 19 of 21 photos, but gets its type right in only 8 of 18 |
 
-## Big numbers of the week
-| What | Number |
-|---|---|
-| Jenga v1, Blender test: category right | 98.3% (393 of 400) |
-| Jenga v1, Blender test: corner miss | 6.0 px |
-| Jenga v1 → v2, real photos: corners good / rough / wrong | 7/12/2 → **12/9/0** |
-| Jenga v3, Blender validation: category right | about 95% (read off the chart) |
-| Jenga v3: 3D position miss | about 3.3 cm (read off the chart) |
-| SmolVLA: load / predict 50 steps | about 8 s / about 1.1 s |
-| Teleop: stop after letting go | within about 20 ms |
-| Teleop: top speed | 150 mm/s (code), 250 mm/s (arm's own cap) |
+## Not tested yet
 
-## Still broken / open questions
-- **The Link cable dropped** every 1–4 minutes. Did turning off USB power saving fix it?
-- **Jenga flat vs. side** is still hard on real photos (v2 got 5 of 18). Does v3 do better? Not tested on real photos yet.
-- **Nothing has been tested with our own Jenga blocks** in front of our own D435.
-- **Can our GPU's 12 GB of memory fine-tune SmolVLA?** Not tested yet.
-- **The demo recorder** (teach mode + camera + gripper key) isn't built yet.
+- `02_first_move.py` (lift the tool 50 mm and back down) on the real arm
+- `05_teach_mode.py` (move the arm by hand) on the real arm
+- Opening and closing the gripper from VR. The 1:23 pm video shows the gripper set to "closed" over the blocks, but we can't tell from it whether it grabbed one.
+- Picking up a Jenga block using VR control
+- The newest VR features: the on-screen display (HUD), controller shake, and camera calibration. See the [VR teleop manual](Lesson05_VR_Teleop_Manual.md).
+- The Jenga program on our own blocks with our own camera
+- Training SmolVLA on our own examples, and whether our graphics card's 12 GB of memory is enough
 
-## Words to know
-| Word | Meaning |
-|---|---|
-| **SDK** | Software Development Kit: the Python library that lets our code talk to the arm |
-| **E-stop** | Emergency stop: the big red button that stops the arm instantly |
-| **TCP** | Tool Center Point: the tip of the tool (gripper) the arm is moving |
-| **Teleop** | Teleoperation: you move your hand and the arm copies you |
-| **Mode 7** | The arm's "online planning" mode: each new target replaces the last, so moves don't pile up |
-| **Queue** | A waiting line. Moves in a queue run one after another, even old ones. |
-| **CNN** | Convolutional Neural Network: an AI that finds patterns in pictures |
-| **Overfitting** | Memorizing the practice pictures instead of learning, like memorizing one practice test |
-| **PnP** | Perspective-n-Point: math that turns corner positions in a picture into a real 3D position |
-| **VLA** | Vision-Language-Action model: sees a camera picture, reads an instruction, outputs arm moves |
-| **Fine-tune** | Teach an already-trained model a new, specific job using your own examples |
-| **Demo / episode** | One full recorded try of a task, from start to finish |
-| **WSL** | Windows Subsystem for Linux: Ubuntu running inside Windows |
+## Still broken
+
+- The Link cable kept dropping. We need to check if turning off USB power saving fixed it.
+- In real photos, the Jenga program has trouble telling a block lying flat from one lying on its side, and its 3D boxes come out squashed.
+- We haven't built the recorder for SmolVLA training examples yet.
+
+## Videos
+
+All videos are in the [`media/`](media/) folder. They were all recorded on Sunday, Oct 25.
+"Headset view" is what the person wearing the Quest Pro saw. "Camera view" is the D435's live picture.
+
+| Video | Time | View |
+|---|---|---|
+| [vr_2026-10-25_120430.mp4](media/vr_2026-10-25_120430.mp4) | 12:04 pm | Headset view |
+| [vr_2026-10-25_121111.mp4](media/vr_2026-10-25_121111.mp4) | 12:11 pm | Headset view |
+| [vr_2026-10-25_122715.mp4](media/vr_2026-10-25_122715.mp4) | 12:27 pm | Headset view |
+| [vr_2026-10-25_123248.mp4](media/vr_2026-10-25_123248.mp4) | 12:32 pm | Headset view |
+| [vr_2026-10-25_123558.mp4](media/vr_2026-10-25_123558.mp4) | 12:35 pm | Headset view |
+| [d435_2026-10-25_124635.mp4](media/d435_2026-10-25_124635.mp4) | 12:46 pm | Camera view |
+| [vr_2026-10-25_130217.mp4](media/vr_2026-10-25_130217.mp4) | 1:02 pm | Headset view |
+| [vr_2026-10-25_132338.mp4](media/vr_2026-10-25_132338.mp4) | 1:23 pm | Headset view: a 7-minute session on the real arm |
+
+## Lessons
+
+- [Lesson 1: xArm 6 basics](Lesson01_xArm6_Core20.md)
+- [Lesson 2: Setting up the Quest Pro](Lesson02_QuestPro_Teleop_Setup.md)
+- [Lesson 3: VLA models (AI that controls robots)](Lesson03_VLA_Models.md)
+- [Lesson 4: The Jenga block finder](Lesson04_Jenga_CNN.md)
+- [Lesson 5: Plan for training an AI without VR](Lesson05_VLA_Plan_Without_VR.md)
+- [Lesson 5: VR teleop manual](Lesson05_VR_Teleop_Manual.md)
 
 ## Daily logs
-- [2026-10-23 (Fri): Notebook set up and the first three lessons](2026-10-23_Fri.md)
-- [2026-10-24 (Sat): Jenga CNN trained on Blender pictures](2026-10-24_Sat.md)
-- [2026-10-25 (Sun): First real arm connection, and VR teleop drives the arm](2026-10-25_Sun.md)
+
+- [Friday, Oct 23: Notebook set up and the first three lessons](2026-10-23_Fri.md)
+- [Saturday, Oct 24: Jenga program trained on Blender pictures](2026-10-24_Sat.md)
+- [Sunday, Oct 25: Real arm connected and controlled with VR](2026-10-25_Sun.md)
+
+## Words to know
+
+| Word | Meaning |
+|---|---|
+| Teleop | Short for teleoperation. You move your hand and the arm copies you. |
+| E-stop | The big red emergency stop button |
+| Mode 7 | An arm setting where each new target replaces the old one |
+| D435 | Our depth camera. It measures how far away each point in the picture is. |
+| SmolVLA | The AI model we plan to train to control the arm |
+| Blender | A free 3D program we used to make fake training pictures |
+| Overfitting | When a program memorizes its practice pictures instead of learning from them |
+| HUD | Heads-up display: information drawn on top of the camera picture, like in a fighter jet |
+| Camera calibration | Measuring exactly where the camera sits on the gripper, so the program knows where the gripper will land in the picture |

@@ -28,6 +28,10 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import numpy as np
+
+import calib   # calib.py, next to this file: camera-to-gripper calibration math
+
 ARM_IP = "192.168.1.217"  # from the label on our control box
 MOVE_ARM = "--live" in sys.argv   # without --live, the arm is never touched
 
@@ -56,12 +60,17 @@ CAM_W, CAM_H, CAM_FPS = 640, 360, 30   # camera picture in VR: low quality on pu
 PORT = 8000
 HERE = Path(__file__).resolve().parent
 MEDIA = HERE.parents[1] / "media"   # this week's media/ folder
+CALIB_FILE = HERE / "camera_calibration.json"   # where the D435 sits on the gripper (made by the calibration steps)
 
 latest = {"grip": False, "pos": None, "yaw": 0.0, "clicks": 0, "arm_clicks": 0, "time": 0.0}   # newest message from the headset
 lock = threading.Lock()   # stops two threads from using `latest` at the same moment
 report = {}   # what the VR page shows (status and live coordinates), rebuilt 30 times a second
-camera = {"data": None, "id": 0, "fps": 0}   # newest D435 picture (raw RGB bytes) and its number
+camera = {"data": None, "id": 0, "fps": 0,    # newest D435 picture (raw RGB bytes) and its number
+          "depth": None, "intr": None}         # its depth picture (mm, lined up with the color) and lens numbers
 new_picture = threading.Condition()   # lets the web server wait until a newer picture arrives
+T_tool_cam, calib_info = calib.load(CALIB_FILE)   # None until the camera is calibrated
+calibration = {"mark": None, "pairs": []}       # calibration in progress: the dot (base mm) and the point pairs
+arm, target, yaw = None, [300.0, 0.0, 300.0], 0.0   # set for real once the arm is on
 
 
 class Server(ThreadingHTTPServer):
@@ -114,6 +123,8 @@ class Handler(SimpleHTTPRequestHandler):
                 latest.update(grip=msg["grip"], pos=msg["pos"], yaw=msg.get("yaw") or 0.0,
                               clicks=msg.get("clicks", 0), arm_clicks=msg.get("arm_clicks", 0), time=time.time())
             reply = json.dumps(report).encode()   # answer with the live coordinates for the VR display
+        elif self.path.startswith("/calib/"):   # calibration steps, from the buttons on the PC page
+            reply = json.dumps(calibrate(self.path[len("/calib/"):], json.loads(body or b"{}"))).encode()
         elif self.path in ("/video.mp4", "/video.webm", "/d435.mp4", "/d435.webm"):   # headset mirror or D435 view
             MEDIA.mkdir(exist_ok=True)
             name = "d435" if self.path.startswith("/d435") else "vr"
@@ -161,8 +172,8 @@ def keep_safe(x, y, z):
 
 
 def camera_loop():
-    """Keep only the newest D435 color picture in `camera`. It stays raw (no JPEG): everything is on
-    this one PC, so skipping compression saves time on both ends."""
+    """Keep only the newest D435 color picture in `camera`, plus its depth picture. The color stays raw
+    (no JPEG): everything is on this one PC, so skipping compression saves time on both ends."""
     try:
         import pyrealsense2 as rs
     except ImportError:
@@ -170,13 +181,20 @@ def camera_loop():
         return
     config = rs.config()
     config.enable_stream(rs.stream.color, CAM_W, CAM_H, rs.format.rgb8, CAM_FPS)
+    config.enable_stream(rs.stream.depth, CAM_W, CAM_H, rs.format.z16, CAM_FPS)
+    align = rs.align(rs.stream.color)   # line the depth picture up with the color picture, pixel for pixel
     while True:   # if the camera hiccups, turn it off and on again
         pipeline = rs.pipeline()
         try:
-            pipeline.start(config)
+            profile = pipeline.start(config)
+            to_mm = profile.get_device().first_depth_sensor().get_depth_scale() * 1000   # depth units -> mm
+            lens = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
+            camera["intr"] = (lens.fx, lens.fy, lens.ppx, lens.ppy)   # focal lengths and picture center (pixels)
             count, t0 = 0, time.time()
             while True:
-                picture = pipeline.wait_for_frames(2000).get_color_frame()
+                frames = align.process(pipeline.wait_for_frames(2000))
+                picture = frames.get_color_frame()
+                camera["depth"] = np.asanyarray(frames.get_depth_frame().get_data()) * np.float32(to_mm)
                 with new_picture:
                     camera["data"] = bytes(picture.get_data())
                     camera["id"] += 1
@@ -192,6 +210,42 @@ def camera_loop():
             except RuntimeError:
                 pass
             time.sleep(2)
+
+
+def tool_pose():
+    """The tool's pose now: x, y, z (mm), roll, pitch, yaw (deg). Dry run: where it would be."""
+    return list(arm.position) if arm else [*target, 180.0, 0.0, yaw]
+
+
+def calibrate(step, msg):
+    """The calibration steps (see Lesson 5). Each returns {"ok": ..., "say": what to tell the user}."""
+    global T_tool_cam, calib_info
+    pairs = calibration["pairs"]
+    if step == "touch":   # the gripper tip is touching the dot: remember where the dot is (base coordinates)
+        calibration["mark"], calibration["pairs"] = tool_pose()[:3], []
+        return {"ok": True, "say": "Dot recorded. Lift up, then click the dot from 4 or more different spots."}
+    if step == "click":   # the dot, seen by the camera from where the arm is now
+        if calibration["mark"] is None:
+            return {"ok": False, "say": "First touch the dot with the gripper tip and press Record touch."}
+        if camera["depth"] is None:
+            return {"ok": False, "say": "No camera picture yet."}
+        d = calib.depth_at(camera["depth"], msg["u"], msg["v"])
+        if not d:
+            return {"ok": False, "say": "No depth reading at that spot. Lift the arm a little and click again."}
+        in_cam = calib.deproject(msg["u"], msg["v"], d, camera["intr"])
+        in_tool = (np.linalg.inv(calib.pose_matrix(*tool_pose())) @ [*calibration["mark"], 1])[:3]
+        pairs.append((in_cam, in_tool))
+        return {"ok": True, "say": f"Point {len(pairs)} saved ({d:.0f} mm away). Move somewhere new and click again."}
+    if step == "solve":
+        if len(pairs) < 3:
+            return {"ok": False, "say": f"Need at least 3 points (have {len(pairs)})."}
+        T, rms = calib.solve(pairs)
+        T_tool_cam, calib_info = T, calib.save(CALIB_FILE, T, rms, len(pairs))
+        return {"ok": True, "say": f"Calibrated from {len(pairs)} points. Fit error {rms:.1f} mm (under 5 is good)."}
+    if step == "reset":
+        calibration.update(mark=None, pairs=[])
+        return {"ok": True, "say": "Calibration steps cleared (the saved calibration is kept)."}
+    return {"ok": False, "say": f"Unknown step {step}."}
 
 
 def connect_arm():
@@ -266,6 +320,7 @@ arm_yaw0 = twist = last_hand_yaw = 0.0   # gripper turn at grip start; how far t
 gripper = "open" if not arm or arm.get_gripper_position()[1] > GRIPPER_OPEN / 2 else "closed"
 last_clicks = None   # the page counts left-trigger clicks; each new click flips the gripper
 motion_on, last_arm_clicks = False, None   # A button arms/disarms motion; it always starts disarmed
+grip_open, last_grip_read, holding, tick = (1.0 if gripper == "open" else 0.0), None, False, 0
 print("LIVE: the arm is on. Hold the grip to move it.\n" if arm else "DRY RUN: the arm will not move.\n")
 
 try:
@@ -327,8 +382,26 @@ try:
                     break
         if not grip:
             limit = ""
+        # The gripper: how open it really is, read 5 times a second. "Holding" = told to close, but it stopped
+        # short of closed and isn't moving any more, so something (a block) is between the fingers.
+        tick += 1
+        if tick % 6 == 0:
+            reading = arm.get_gripper_position()[1] if arm else (GRIPPER_OPEN if gripper == "open" else GRIPPER_CLOSED)
+            if reading is not None:
+                holding = gripper == "closed" and reading > 30 and last_grip_read is not None and abs(reading - last_grip_read) < 5
+                grip_open, last_grip_read = reading / GRIPPER_OPEN, reading
+        # Where the gripper will land in the picture (needs the calibration and a depth picture).
+        landing = tip_px = None
+        if T_tool_cam is not None and camera["depth"] is not None:
+            landing = calib.landing_point(T_tool_cam, camera["depth"], camera["intr"])
+            tip_px = calib.tip_pixel(T_tool_cam, camera["intr"])
         tool = arm.position if arm else [*target, 0, 0, yaw]   # where the tool really is (dry run: where it would be)
         report = {"live": bool(arm), "status": status, "limit": limit, "gripper": gripper, "motion": motion_on,
+                  "grip_open": round(grip_open, 2), "holding": holding,
+                  "landing": [round(landing[0]), round(landing[1]), round(landing[2])] if landing else None,
+                  "tip_px": [round(tip_px[0]), round(tip_px[1])] if tip_px else None,
+                  "calib": {"done": T_tool_cam is not None, "rms": calib_info["rms_mm"] if calib_info else None,
+                            "dot": calibration["mark"] is not None, "points": len(calibration["pairs"])},
                   "tool": [round(t) for t in tool[:3]], "target": [round(t) for t in target],
                   "yaw": round(tool[5]), "target_yaw": round(yaw),
                   "joints": [round(a, 1) for a in arm.angles[:6]] if arm else None}

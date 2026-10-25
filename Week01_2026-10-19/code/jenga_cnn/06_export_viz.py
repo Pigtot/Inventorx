@@ -24,8 +24,8 @@ import torch
 from torchvision.io import decode_image
 from torchvision.transforms import v2
 
-from jenga_model import (CATEGORIES, DATA, IMG, box_error_px, camera_matrix, category_from_pose, crop_square, describe,
-                         load_model, prepare, rotation_error_deg, solve_pose, top_face)
+from jenga_model import (CATEGORIES, DATA, IMG, box_error_px, camera_matrix, crop_square, describe, load_model, prepare,
+                         rotation_error_deg, solve_pose_on_table, top_face)
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE.parents[1] / "media/jenga_net_explorer.html"
@@ -122,14 +122,17 @@ def clockwise(points):
     return [v for q in p[start:] + p[:start] for v in q]
 
 
-def pose_guess(box_px, it):
-    """For Blender pictures we know the lens and which way is up, so PnP can give the full 3D answer."""
+def pose_guess(box_px, it, head_cat):
+    """For Blender pictures we know the lens and which way is up, so PnP can give the full 3D answer:
+    head A picks the face, and PnP on the table finds the spin and position."""
     if it["top"] is None:
         return dict(box=box_px, top=None, desc=None, pose_cat=None, distance=None, rot_err=None, box_err=None)
-    rvec, tvec = solve_pose(box_px, camera_matrix(it["lens"]))
+    K = camera_matrix(it["lens"])
+    geometry_cat, _, _, _ = solve_pose_on_table(box_px, K, it["up"])          # what geometry alone would say
+    _, rvec, tvec, _ = solve_pose_on_table(box_px, K, it["up"], only=[head_cat])
     pts = np.reshape(box_px, (8, 2))
     top = clockwise([tuple(pts[k]) for k in top_face(rvec, tvec, it["up"])])
-    return dict(box=box_px, top=top, desc=describe(top), pose_cat=CATEGORIES.index(category_from_pose(rvec, it["up"])),
+    return dict(box=box_px, top=top, desc=describe(top), pose_cat=CATEGORIES.index(geometry_cat),
                 distance=float(np.linalg.norm(tvec)), rot_err=rotation_error_deg(rvec, it["rot"]),
                 box_err=box_error_px(torch.tensor(box_px) / 256, torch.tensor(it["box"]) / 256).item())
 
@@ -137,7 +140,7 @@ def pose_guess(box_px, it):
 p_all, c_all, h_all, acts = run(torch.stack([it["x"] for it in items]))
 samples = []
 for j, it in enumerate(items):
-    guess = pose_guess((c_all[j] * 256).tolist(), it)
+    guess = pose_guess((c_all[j] * 256).tolist(), it, CATEGORIES[int(p_all[j].argmax())])
     ladder_heat = dict(size=h_all.shape[-1], map=encode(h_all[j, 0]))   # head B's corner heat map
     layers, ladder = [], []
     for k in LAYERS:

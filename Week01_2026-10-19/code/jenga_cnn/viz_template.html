@@ -139,7 +139,7 @@ table { border-collapse: collapse; font-size: 13px; }
 .step-arrow { align-self: center; color: var(--muted); font-size: 18px; padding-top: 30px; }
 
 /* charts */
-.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 16px; }
 .chart { padding: 14px 14px 8px; position: relative; display: grid; gap: 6px; min-width: 0; }
 .chart svg { width: 100%; height: auto; display: block; overflow: visible; }
 .chart text { font-family: var(--font-data); font-size: 10px; fill: var(--muted); }
@@ -155,7 +155,7 @@ details summary { cursor: pointer; }
 .history th:first-child, .history td:first-child { text-align: left; }
 
 /* final test */
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; }
 .stat { padding: 14px 16px; display: grid; gap: 2px; }
 .stat .v { font: 650 26px var(--font-display); }
 .stat .k { font-size: 12px; color: var(--ink-2); }
@@ -384,12 +384,13 @@ function renderReadout(s) {
   }
   const row = (k, a, b) => `<tr><td>${k}</td><td class="data">${a}</td><td class="data">${b}</td></tr>`;
   $("#measures").innerHTML = `<tr><th>From the 8 corners + PnP</th><th>Network</th><th>Truth</th></tr>` +
-    row("Category from 3D pose", cats[g.pose_cat], cats[t.cat]) +
+    row("Category from geometry alone", cats[g.pose_cat], cats[t.cat]) +
     row("Distance from camera", `${fmt(g.distance, 1)} cm`, `${fmt(t.distance, 1)} cm`) +
     row("Top face angle", `${fmt(g.desc.angle)}°`, `${fmt(t.desc.angle)}°`) +
     row("Top face size", `${fmt(g.desc.length)} × ${fmt(g.desc.width)} px`, `${fmt(t.desc.length)} × ${fmt(t.desc.width)} px`);
-  $("#corner-err").textContent = `3D rotation miss: ${fmt(g.rot_err, 1)}°. Average miss over the 8 box corners: ` +
-    `${fmt(g.box_err, 1)} px on a 256 × 256 picture. The shaded face is the top face PnP found.`;
+  $("#corner-err").textContent = `Head A picked the face; PnP, knowing the block lies on the table, found its spin and ` +
+    `position. 3D rotation miss: ${fmt(g.rot_err, 1)}°. Average miss over the 8 box corners: ${fmt(g.box_err, 1)} px ` +
+    `on a 256 × 256 picture. The shaded face is the top face.`;
 }
 
 /* ---------- picture -> idea ladder ---------- */
@@ -622,7 +623,8 @@ function renderTraining() {
   const host = $("#charts"), H = DATA.history;
   host.innerHTML = "";
   $("#train-text").textContent = `The network studied ${DATA.results.n_test * 8} rendered pictures, ${H.length} times over ` +
-    `(each pass is one "epoch"). After every epoch we quizzed it on ${DATA.results.n_test} pictures it doesn't train on (the "validation" set).`;
+    `(each pass is one "epoch"). After every epoch we quizzed it on ${DATA.results.n_test} pictures it doesn't train on (the "validation" set).` +
+    (DATA.results.history_note ? ` ${DATA.results.history_note} The final test below uses the better PnP on the table.` : "");
   lineChart(host, { title: "Loss (lower is better)", fmt: (v, tip) => fmt(v, tip ? 3 : 2), series: [
     { label: "train", key: "train_loss", color: "--accent" },
     { label: "validation", key: "val_loss", color: "--series-2" }] });
@@ -650,10 +652,10 @@ function renderTest() {
   const stat = (v, k) => `<div class="card stat"><span class="v data">${v}</span><span class="k">${k}</span></div>`;
   const pose = "pnp_accuracy" in R;
   $("#stats").innerHTML = stat(`${fmt(R.accuracy * 100, 1)}%`, "category correct (head A)") +
-    (pose ? stat(`${fmt(R.pnp_accuracy * 100, 1)}%`, "category correct (from 3D pose)") : "") +
+    (pose ? stat(`${fmt(R.pnp_accuracy * 100, 1)}%`, "category from 3D geometry alone") : "") +
     stat(`${fmt(R.corner_px, 1)} px`, "average top-corner miss (256 px picture)") +
-    (pose ? stat(`${fmt(R.position_cm, 2)} cm`, "average 3D position miss") +
-            stat(`${fmt(R.rotation_deg, 1)}°`, `average 3D rotation miss (median ${fmt(R.rotation_deg_median, 1)}°)`)
+    (pose ? stat(`${fmt(R.position_cm_median, 2)} cm`, `typical 3D position miss (median; average ${fmt(R.position_cm, 1)} cm)`) +
+            stat(`${fmt(R.rotation_deg_median, 1)}°`, `typical 3D rotation miss (median; average ${fmt(R.rotation_deg, 1)}°)`)
           : stat(`${fmt(R.angle_deg, 1)}°`, "average angle miss")) +
     (DATA.real ? stat(`${DATA.real.right} / ${DATA.real.labeled}`, "real-photo categories right") : "");
   if (DATA.real) {
@@ -661,9 +663,9 @@ function renderTest() {
       `(${fmt((DATA.real.right / DATA.real.labeled) * 100)}%), versus ${fmt(R.accuracy * 100, 1)}% on Blender pictures.</b> ` +
       `Real photos have no exact corner labels, so pick one in "Try it" and judge the blue box yourself.`;
   }
-  if (R.pnp_confusion) $("#confusion-text").textContent = "Category from the 3D pose. Rows are the truth, columns are the guess. The diagonal is correct.";
+  if (R.pnp_confusion) $("#confusion-text").textContent = "Head A's category. Rows are the truth, columns are the guess. The diagonal is correct.";
   let html = `<tr><th></th>${cats.map((c) => `<th>${c}</th>`).join("")}</tr>`;
-  (R.pnp_confusion || R.confusion).forEach((row, i) => {
+  R.confusion.forEach((row, i) => {
     const total = row.reduce((a, b) => a + b, 0) || 1;
     html += `<tr><th>${cats[i]}</th>` + row.map((n) => {
       const t = n / total;

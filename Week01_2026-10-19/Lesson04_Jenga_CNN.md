@@ -40,15 +40,16 @@ the face that's up (that's the category), spin, position, camera height and tilt
 Because Blender placed the block, it knows exactly where the 4 top corners land in the picture. **The labels are perfect and free: nobody clicks anything.**
 
 **Version 2** also scatters up to 8 neighbor blocks around the target, because real photos are crowded. The label is always the **middle** block.
+**Version 3** also saves all 8 box corners and the block's exact 3D position and rotation.
 
-We always check labels by eye before training ([03_check_labels.py](code/jenga_cnn/03_check_labels.py)). Version 1 (one block) is on the left, version 2 (crowded) on the right:
+We always check labels by eye before training ([03_check_labels.py](code/jenga_cnn/03_check_labels.py)). Version 1 (one block) is on the left, version 3 (crowded, with the 3D box) on the right:
 
-![Version 1: 16 rendered single Jenga blocks with their 4 top corners marked](media/jenga_label_check_v1.png) ![Version 2: 16 rendered scenes with several blocks; the corner dots mark the middle block's top face](media/jenga_label_check.png)
+![Version 1: 16 rendered single Jenga blocks with their 4 top corners marked](media/jenga_label_check_v1.png) ![Version 3: 16 rendered scenes with several blocks; a thin 3D box outlines the middle block and dots mark its top face](media/jenga_label_check.png)
 
 ## Core idea 5: Two traps we avoided
 | Trap | What goes wrong | Our fix |
 |---|---|---|
-| **Corner order** | A rectangle has no "first" corner. Turn it 180° and it looks the same. If "corner 1" means top-left in one picture and bottom-right in a nearly identical one, the network learns to guess the middle. | The loss tries all 4 starting corners and keeps the best match (`corner_loss` in [jenga_model.py](code/jenga_cnn/jenga_model.py)). |
+| **Corner order** | A rectangle has no "first" corner. Turn it 180° and it looks the same. If "corner 1" means top-left in one picture and bottom-right in a nearly identical one, the network learns to guess the middle. | The loss tries all 4 starting corners and keeps the best match. In version 3, a whole block looks the same after a 180° turn around any of its 3 axes, so the loss tries those 4 corner orders (`box_loss` in [jenga_model.py](code/jenga_cnn/jenga_model.py)). |
 | **Sim-to-real gap** | A network trained only on fake pictures can fail on real photos. | **Domain randomization:** random wood, tables, lighting, blur, color, and noise, so a real photo looks like "just another variation." Real photos are still the final test. |
 
 ## Core idea 6: Overfitting = memorizing instead of learning
@@ -98,57 +99,94 @@ We changed the renderer to match what real photos show: **up to 8 neighbor block
 | Blender test: category right | 98.3% | 85.0% |
 | Blender test: corner miss | 6.0 px | 15.1 px |
 
-![Version 2 on the same 21 real crops: the blue outlines now sit on the middle block in most crops](media/jenga_real_test.png)
+![Version 2 on the same 21 real crops: the blue outlines now sit on the middle block in most crops](media/jenga_real_test_v2.png)
 
 **What we learned:**
 - **Training with neighbors worked for corners.** Version 2 finds the middle block in every crop and outlines its top face well in 12 of 21. Version 1 managed 7.
 - **Flat vs. side got worse.** From a steep angle, a flat block and a block on its side look alike, even to people. Some of our own real-photo labels may be wrong, especially for the dark-wood photo. With only 18 labeled crops, a couple of mistakes swing the score a lot.
 - **Version 2 overfit** (Core idea 6). Its training loss reached 0.16 while validation loss stalled near 0.83. 3,200 pictures were enough for lone blocks but not for crowded scenes.
 
-![Version 2 training curves: training loss keeps falling to 0.16 while validation loss levels off near 0.83 after epoch 12](media/jenga_training_curves.png)
+![Version 2 training curves: training loss keeps falling to 0.16 while validation loss levels off near 0.83 after epoch 12](media/jenga_training_curves_v2.png)
+
+## Version 3: more data, heat maps, and the 3D pose (PnP)
+Version 3 made four changes. Each one fixed a problem we could see.
+
+**1. 3× more pictures, plus random turns and mirrors (fixes overfitting).** We rendered 12,000 crowded scenes instead of 4,000. During training, each picture is also turned 0/90/180/270° and maybe mirrored, with the corner labels moving exactly with it. We added two small brakes on memorizing: **dropout** (randomly hide 20% of the features on each training step) and stronger **weight decay** (gently pull every weight toward zero). The training/validation loss gap shrank from about 0.67 to about 0.09.
+
+**2. Heat maps instead of 8 plain numbers (fixes blurry corners).** ResNet's last step averages each 7 × 7 map into one number. That throws away most of the *where* information, and then we asked for exact corner positions. Now head B "zooms back up" to a 56 × 56 grid and paints one **heat map per corner**. Each corner is the *average spot of its heat*, weighted by how hot each square is (called **soft-argmax**). We also add two "where am I" channels (x and y position), so "the block in the middle" is easy to find.
+- Our first try picked the 4 hottest spots instead. When two corners' blobs merged, it grabbed empty squares, and the outlines shot off to the picture's edges. Soft-argmax always gives exactly one point per map.
+
+**3. All 8 box corners, then PnP (gives the 3D pose).** Head B finds all 8 corners of the block's 3D box (even the 1–3 hidden underneath). **PnP** (Perspective-n-Point, `cv2.solvePnP`) takes those 8 corners, the block's real size (7.5 × 2.5 × 1.5 cm), and the camera's lens setting, and works out where the block is in 3D (cm) and how it's turned.
+- When a training picture is mirrored, the corner numbers must be swapped end-for-end. Otherwise the corners describe a mirror-image block that no real block can match. We checked this: PnP fits every turned or mirrored example within 0.007 px.
+
+**4. Use what you know: the block lies on the table.** Plain PnP allows any 3D rotation. But a block on a table can only rest on one of its 3 face types and **spin**. Since we know which way is up, `solve_pose_on_table` tries each face × every spin angle (in 2° steps), works out the position for each with simple linear algebra, and keeps the best fit. Fewer things to guess = less room for error.
+
+**Results on 1,200 Blender test pictures** (the network never saw them):
+
+| Measure | Version 2 | Version 3 |
+|---|---|---|
+| Category right (head A) | 85.0% | **94.4%** |
+| Top-corner miss | 15.1 px | **9.0 px** |
+| 3D position miss (median / average) | none | **0.95 cm** / 1.9 cm |
+| 3D rotation miss, plain PnP (median) | none | 25.5° |
+| 3D rotation miss, PnP on the table (median) | none | **3.7°** |
+
+![Version 3 training curves: training and validation loss fall together; category accuracy (head A) reaches 95%; top-corner miss falls to 19 px and 3D position miss to 3.3 cm (both scored with plain PnP during training)](media/jenga_training_curves.png)
+
+**Does the category "fall out for free" from the 3D pose?** In theory yes: whichever block edge points up tells you flat, side, or standing. In practice, with our corners, **no**. Geometry alone was right 89.8% of the time (90–91% with plain PnP), but head A was right **94.4%**. The block's short edges (1.5 and 2.5 cm) are only 12–25 px tall in these pictures, so a 9 px corner miss blurs exactly the difference between flat and side. Combining both clues didn't beat head A either. **So each part does what it's best at: head A picks the face, and PnP on the table finds the spin and position.**
+
+**Real photos:** head A got 8 of 18 categories right (like version 1). In 19 of 21 crops the 3D box lands on the middle block and lines up with its length (graded by eye). But on most real photos the box comes out **squashed flat**: the network barely separates the top corners from the bottom ones on real wood.
+
+![Version 3 on the same 21 real crops: blue 3D boxes sit on the middle block and follow its length, but most are squashed flat](media/jenga_real_test.png)
+
+**What we learned:**
+- **Look at the failures before changing anything.** The heat-map version first looked worse (35 px). Drawing its heat maps showed the maps were fine and the corner picker was broken.
+- **Add what you know about the world.** "The block lies on the table" cut the rotation miss from 25.5° to 3.7° without retraining.
+- **A math step is only as good as its inputs.** PnP is exact with perfect corners (0.002 cm), but our corners aren't precise enough on the short edges to read flat vs. side.
 
 **Next steps (the 20% that matters):**
-1. **Photograph our own blocks** from the angle our camera will really use (the D435 on the arm, looking down). That's the test that counts, and these internet photos are harder than our real setup.
-2. **More pictures for version 2:** about 12,000 instead of 4,000, to fix the overfitting.
-3. Hand-label even 50 real photos and mix them into training.
+1. **Photograph our own blocks with our D435,** looking down from the arm. The D435's depth reading can also check the PnP distance.
+2. On the robot, "up" comes from the arm's joint angles, and the lens setting from the D435. Then `solve_pose_on_table` gives the grab position and spin directly.
+3. Hand-label some real photos (or our own D435 pictures) and mix them into training, to un-squash the real-photo boxes.
 
-For now: **trust version 2's corners, not its flat/side answer.**
-
-**The interactive page:** open [media/jenga_net_explorer.html](media/jenga_net_explorer.html) in any browser. It uses the current model (version 2). Pick a Blender or real picture to see the network's corners and answers, watch the picture turn into an idea layer by layer, and see which neurons fire.
+**The interactive page:** open [media/jenga_net_explorer.html](media/jenga_net_explorer.html) in any browser. It uses the current model (version 3). Pick a Blender or real picture to see the network's 3D box (with the top face shaded), its distance and rotation next to the truth, the corner heat maps, and the picture turning into an idea layer by layer.
 
 ## How to run it
-All big files (textures, 4,000 images, the trained model) live in `~/arm_data/jenga/`, outside OneDrive.
+All big files (textures, 12,000 images, the trained model) live in `~/arm_data/jenga/`, outside OneDrive.
 1. `cd` into `Week01_2026-10-19/code/jenga_cnn`
 2. Download textures and lighting (about 50 MB, once):
    `~/venvs/vision/bin/python 01_download_assets.py`
-3. Render the pictures (about 35 minutes for 4,000):
-   `/Applications/Blender.app/Contents/MacOS/Blender -b -P 02_render_blender.py -- 4000`
+3. Render the pictures (about 30 minutes per 4,000):
+   `/Applications/Blender.app/Contents/MacOS/Blender -b -P 02_render_blender.py -- 12000`
+   Every picture has its own random seed, so running it again only re-computes the labels (seconds) and renders missing pictures.
 4. Check the labels: `~/venvs/vision/bin/python 03_check_labels.py`, then open `media/jenga_label_check.png`
-5. Train (about 15 minutes): `~/venvs/vision/bin/python 04_train.py`
+5. Train (about an hour for 12,000 pictures): `~/venvs/vision/bin/python 04_train.py`
+   Re-score the saved network without training: `~/venvs/vision/bin/python 04_train.py --test-only`
 6. Try any photo: `~/venvs/vision/bin/python 05_predict.py photo.jpg`
+   Add `--fov 69` (the D435 color camera's field of view) to also get the block's distance from PnP.
 7. Download real test photos (once): `~/venvs/vision/bin/python 07_get_real_photos.py`
 8. Run the real-photo test: `~/venvs/vision/bin/python 08_test_real.py`, then open `media/jenga_real_test.png`
 9. Rebuild the web page: `~/venvs/vision/bin/python 06_export_viz.py`
 
-Version 1's images, labels, and model are saved as `images_v1/`, `labels_v1.csv`, and `models/v1/` in `~/arm_data/jenga/`.
+Older versions are saved in `~/arm_data/jenga/`: version 1 as `images_v1/`, `labels_v1.csv`, `models/v1/`; version 2's model as `models/v2/`.
 
 ## Files
 | File | What it does |
 |---|---|
 | `code/jenga_cnn/01_download_assets.py` | Downloads wood/table textures and room lighting from Poly Haven (CC0: free for any use) |
-| `code/jenga_cnn/02_render_blender.py` | Makes the fake photos and `labels.csv` |
+| `code/jenga_cnn/02_render_blender.py` | Makes the fake photos and `labels.csv` (category, 4 top corners, 8 box corners, 3D pose, lens, "up") |
 | `code/jenga_cnn/03_check_labels.py` | Draws labels on 16 pictures so we can check them |
-| `code/jenga_cnn/jenga_model.py` | The network, the corner loss, and the corners → center/angle/size math |
-| `code/jenga_cnn/04_train.py` | Fine-tunes ResNet-18 and runs the final test |
-| `code/jenga_cnn/05_predict.py` | Runs the network on any photo |
+| `code/jenga_cnn/jenga_model.py` | The network (heat-map head B), the corner losses, PnP (plain and on the table), and the corners → center/angle/size math |
+| `code/jenga_cnn/04_train.py` | Fine-tunes ResNet-18 and runs the final test, including the 3D pose |
+| `code/jenga_cnn/05_predict.py` | Runs the network on any photo and draws its 3D box |
 | `code/jenga_cnn/06_export_viz.py` + `viz_template.html` | Builds the interactive web page |
 | `code/jenga_cnn/07_get_real_photos.py` | Downloads Creative Commons Jenga photos from Openverse and makes contact sheets for picking |
 | `code/jenga_cnn/real_crops.csv` | Which block to crop in each real photo, and the category a person labeled |
 | `code/jenga_cnn/08_test_real.py` | Runs the network on the real crops and draws the results |
 | `media/jenga_net_explorer.html` | **The interactive page.** Open it in any browser. |
-| `media/*_v1.png` | Version 1's label check, training curves, and real-photo test |
+| `media/*_v1.png`, `media/*_v2.png` | Older versions' label check, training curves, and real-photo tests (the unmarked files are version 3) |
 
 ## Extra (optional)
 - **Fix standing blocks:** move the camera closer for standing blocks, or measure their angle from the tall side faces instead of the tiny top.
-- **Pixels → centimeters:** pixels alone don't tell you distance. The D435's depth reading does, so center + angle + depth = where the arm should grab.
+- **Check PnP with depth:** PnP already gives centimeters from the known block size. The D435's depth reading is a second, independent measurement to compare against.
 - **Many blocks in one picture** (a whole tower) needs a detector first, such as YOLO, to crop each block.
