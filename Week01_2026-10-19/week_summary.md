@@ -21,10 +21,11 @@ We worked three days this week.
 | D435 camera takes color and depth pictures | Yes | `03_d435_snapshot.py` |
 | Gripper reports its position | Yes | 840 out of 850, almost fully open |
 | Controlling the arm with the VR headset | Yes | Version 5. The A button turns motion on and off. The last session (1:23 pm video, almost 7 minutes) was on the real arm. |
+| Picking up a Jenga block with VR | Yes | In the 1:23 pm video, from 4:50 to 5:35, the gripper holds a block while the arm moves. At 6:00 it lets go. |
 | Camera calibration math | On the computer only | On made-up test data, it found where the camera sits within about 2 mm and half a degree. Not done on the real arm yet. |
 | Quest Pro connected to the PC by Link cable | Partly | It dropped every 1–4 minutes. We turned off USB power saving but haven't checked if that fixed it. |
 | Quest Pro over school Wi-Fi | No | School Wi-Fi blocks it, so we use cables |
-| Recording videos | Yes | 8 videos so far (see below) |
+| Recording videos | Yes | 8 videos so far. Only the useful one is on GitHub (see below). |
 | SmolVLA runs on the PC | On the computer only | Its answers are for a different arm, so we never sent them to ours |
 | Jenga program on Blender pictures | On the computer only | Version 3 gets the block's type right 94% of the time and its position within about 1 cm |
 | Jenga program on real photos | Not yet | It finds the right block in 19 of 21 photos, but gets its type right in only 8 of 18 |
@@ -33,7 +34,6 @@ We worked three days this week.
 
 - `02_first_move.py` (lift the tool 50 mm and back down) on the real arm
 - `05_teach_mode.py` (move the arm by hand) on the real arm
-- Picking up a Jenga block using VR control. In the 1:23 pm video the gripper is set to closed above the blocks, but you can't tell if it picked one up.
 - The newest VR features: the on-screen display (HUD), controller shake, and camera calibration. See the [VR teleop manual](Lesson05_VR_Teleop_Manual.md).
 - The Jenga program on our own blocks with our own camera
 - Training SmolVLA on our own examples, and whether our graphics card's 12 GB of memory is enough
@@ -46,19 +46,15 @@ We worked three days this week.
 
 ## Videos
 
-All videos are in the [`media/`](media/) folder. They were all recorded on Sunday, Oct 25.
-"Headset view" is what the person wearing the Quest Pro saw. "Camera view" is the D435's live picture.
+We only put a video on GitHub when it shows something worth seeing, like the arm picking up a block. The rest stay on the club PC in the `media/` folder.
 
-| Video | Time | View |
-|---|---|---|
-| [vr_2026-10-25_120430.mp4](media/vr_2026-10-25_120430.mp4) | 12:04 pm | Headset view |
-| [vr_2026-10-25_121111.mp4](media/vr_2026-10-25_121111.mp4) | 12:11 pm | Headset view |
-| [vr_2026-10-25_122715.mp4](media/vr_2026-10-25_122715.mp4) | 12:27 pm | Headset view |
-| [vr_2026-10-25_123248.mp4](media/vr_2026-10-25_123248.mp4) | 12:32 pm | Headset view |
-| [vr_2026-10-25_123558.mp4](media/vr_2026-10-25_123558.mp4) | 12:35 pm | Headset view |
-| [d435_2026-10-25_124635.mp4](media/d435_2026-10-25_124635.mp4) | 12:46 pm | Camera view |
-| [vr_2026-10-25_130217.mp4](media/vr_2026-10-25_130217.mp4) | 1:02 pm | Headset view |
-| [vr_2026-10-25_132338.mp4](media/vr_2026-10-25_132338.mp4) | 1:23 pm | Headset view: a 7-minute session on the real arm |
+| Video | What it shows |
+|---|---|
+| [vr_2026-10-25_132338.mp4](media/vr_2026-10-25_132338.mp4) | 1:23 pm, what the person in the headset saw. VR control of the real arm. The gripper picks up a block at 4:50 and lets go at 6:00. |
+
+The other 7 videos from Sunday stay on the PC. Five are mostly recordings of the computer screen, one is a blank page, and the camera video shows a block that never moves. The 12:35 pm video does show the real arm, but it knocks a block over instead of picking it up.
+
+To put a new video on GitHub, add a line for it at the bottom of the `.gitignore` file that starts with `!`.
 
 ## Lessons
 

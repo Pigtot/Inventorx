@@ -11,3 +11,9 @@ desktop.ini
 # Virtual environments (ours lives in ~/venvs/xarm, but just in case)
 venv/
 .venv/
+
+# Videos stay on the club PC unless they show something worth keeping (like a real grab).
+# To put one on GitHub, add a line for it below that starts with "!".
+*.mp4
+*.webm
+!Week01_2026-10-19/media/vr_2026-10-25_132338.mp4
