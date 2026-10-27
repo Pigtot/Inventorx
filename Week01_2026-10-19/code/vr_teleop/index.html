@@ -3,66 +3,94 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>xArm VR Teleop</title>
+<title>xArm Teleop</title>
 <style>
-  body { font-family: "Segoe UI", system-ui, sans-serif; background: #04080d; color: #d9f4ff; max-width: 70em; margin: 2em auto; padding: 0 1em; }
-  h1, h2 { color: #4fd8ff; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; text-shadow: 0 0 10px rgba(79, 216, 255, 0.5); }
-  b { color: #4fd8ff; }
-  button { font-size: 1.05em; padding: 0.5em 1em; background: rgba(79, 216, 255, 0.08); color: #4fd8ff;
-           border: 1px solid #4fd8ff; border-radius: 3px; cursor: pointer; letter-spacing: 0.05em; }
-  button:hover { background: rgba(79, 216, 255, 0.2); box-shadow: 0 0 10px rgba(79, 216, 255, 0.4); }
-  button:disabled { color: #4a6470; border-color: #4a6470; background: none; box-shadow: none; }
-  pre { background: #06111a; border: 1px solid rgba(79, 216, 255, 0.3); padding: 0.8em 1em; font-size: 1em; color: #9fe9ff; }
-  #camview, #simview { display: block; max-width: 100%; max-height: 70vh; background: #04070b; border: 1px solid rgba(79, 216, 255, 0.35); }
+  :root { --bg: #0b0d10; --card: #15181d; --line: #262a31; --text: #e8eaed; --dim: #9aa0a6; --accent: #4fd8ff; --warn: #ffb347; }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 76rem; padding: 24px; background: var(--bg); color: var(--text);
+         font: 15px/1.45 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+  h1 { flex: 1; margin: 0; font-size: 22px; font-weight: 600; }
+  h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
+  main { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; }
+  canvas { display: block; max-width: 100%; max-height: 70vh; margin: 0 auto; border-radius: 10px; background: #000; }
   #camview { cursor: crosshair; }
-  .views { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
-  .views figure { margin: 0; }
-  .views figure:first-child { flex: 3 1 480px; }
-  .views figure:last-child { flex: 2 1 320px; }
-  .views figcaption, .hint { color: #6fa8bd; font-size: 0.9em; margin-top: 4px; }
-  ol.steps li { margin: 0.4em 0; }
-  #calmsg { color: #ffb347; }
+  button { font: inherit; font-weight: 500; padding: 7px 16px; border-radius: 999px; border: 1px solid var(--line);
+           background: #22262d; color: var(--text); cursor: pointer; }
+  button:hover { background: #2b3038; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #04121a; }
+  button.on { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+  .dim { color: var(--dim); }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 20px; margin: 0; }
+  dt { color: var(--dim); }
+  dd { margin: 0; }
+  kbd { font-family: inherit; font-size: 13px; font-weight: 600; padding: 3px 8px; border-radius: 6px; background: #22262d; border: 1px solid var(--line); }
+  ol { margin: 0; padding-left: 20px; }
+  li { margin: 8px 0; }
+  #stats { font: 13px/1.4 ui-monospace, Consolas, monospace; }
+  #msg:empty, #calmsg:empty { display: none; }
+  #msg, #calmsg { margin: 0 0 16px; }
+  #calmsg { margin: 12px 0 0; }
 </style>
 <script src="hud.js"></script>
 <script type="importmap">{ "imports": { "three": "./lib/three.module.js" } }</script>
-<script type="module" src="sim.js"></script>
 </head>
 <body>
-<h1>xArm VR Teleop</h1>
-<p>Release the right grip, then press <b>A</b> to arm motion (it starts OFF; press A again to turn it off).
-Hold the <b>right grip</b> and the arm follows your hand. Let go and it stops.
-Small hand moves are fine and precise; reaching farther moves the arm much more.<br>
-<b>Twist your hand</b> while holding the grip: the gripper turns the same amount (it stays pointing down).<br>
-<b>Left trigger</b> click: close the gripper on a block; click again to open it.<br>
-Press <b>B</b> to turn the camera picture a quarter turn (it's remembered).<br>
-<b>Controller buzz:</b> a long, strong buzz in both hands = the arm stopped on its own, so look at it. 2 quick ticks = "not now" (motion is OFF, or let go of the grip before pressing A).</p>
-<p><button id="vr" disabled>Checking for VR...</button></p>
+<header>
+  <h1>xArm Teleop</h1>
+  <span id="stats" class="dim">Not in VR</span>
+  <button id="vr" class="primary" disabled>Checking for VR…</button>
+</header>
 <p id="msg"></p>
-<h2>Live views</h2>
-<div class="views">
-  <figure><canvas id="camview" width="960" height="540"></canvas><figcaption>D435 HUD · reticle = where the gripper will land</figcaption></figure>
-  <figure><canvas id="simview" width="640" height="440"></canvas><figcaption>3D twin (official CAD, live joint angles; dot = where the arm is heading)</figcaption></figure>
-</div>
-<p><button id="camrec">Record D435 view</button>
-   <button id="rec">Record headset mirror (optional)</button></p>
-<pre id="stats">Not in VR yet.</pre>
+<main>
+  <section class="card">
+    <h2>Camera</h2>
+    <canvas id="camview" width="960" height="540"></canvas>
+    <div class="row">
+      <button id="depth">Depth view</button>
+      <button id="camrec">Record camera</button>
+      <button id="rec">Record headset</button>
+    </div>
+  </section>
+  <section class="card">
+    <h2>Arm</h2>
+    <canvas id="simview" width="640" height="440"></canvas>
+    <p class="dim">Live joint angles. The dot is where the arm is heading.</p>
+  </section>
+  <section class="card">
+    <h2>Controls</h2>
+    <dl>
+      <dt>Arm or disarm</dt><dd><kbd>A</kbd> with the grip released</dd>
+      <dt>Move</dt><dd>Hold the right grip</dd>
+      <dt>Turn the gripper</dt><dd>Twist your hand while holding</dd>
+      <dt>Open or close</dt><dd><kbd>Left trigger</kbd></dd>
+      <dt>Depth view</dt><dd><kbd>X</kbd></dd>
+      <dt>Rotate the picture</dt><dd><kbd>B</kbd></dd>
+      <dt>Long buzz</dt><dd>The arm stopped on its own. Look at it.</dd>
+      <dt>Two ticks</dt><dd>Not now. Motion is off.</dd>
+    </dl>
+  </section>
+  <section class="card">
+    <h2>Calibrate camera</h2>
+    <ol>
+      <li>Mark a dot on the table.</li>
+      <li>Touch it with the gripper tip. <button id="caltouch">Record touch</button></li>
+      <li>From 4 or more spots, let go and click the dot in the camera view.</li>
+      <li><button id="calsolve">Solve</button> <button id="calreset">Start over</button></li>
+    </ol>
+    <p id="calmsg"></p>
+    <p class="dim">Do this once per camera mount.</p>
+  </section>
+</main>
 
-<h2>Camera calibration</h2>
-<p class="hint">Finds exactly where the D435 sits on the gripper, so the HUD can show where the gripper will land.
-Two people: the operator drives the arm in VR, the spotter clicks here. Do it once (it's saved); redo it if the camera mount moves.</p>
-<ol class="steps">
-  <li>Put a small dot (pen mark or sticker) on the table in front of the arm.</li>
-  <li>Drive the gripper tip down until it <b>just touches</b> the dot, then: <button id="caltouch">Record touch</button></li>
-  <li>Lift the arm. From <b>4 or more different spots</b> (change the height and the turn), let go, then <b>click the dot</b> in the live view above.</li>
-  <li><button id="calsolve">Solve</button> &nbsp; <button id="calreset">Start over</button></li>
-</ol>
-<p id="calmsg"></p>
-
-<script>
-const SCREEN_SIZE = 1.0;       // meters along the camera screen's long side
-const SCREEN_DISTANCE = 1.0;   // meters in front of where your head was when VR started
-const SCREEN_HEIGHT = 0.12;    // meters above that spot (the info panel sits below the screen)
-const PANEL_W = 0.8, PANEL_H = 0.25;  // info panel size in meters (its picture is 1024 x 320)
+<script type="module">
+import * as THREE from "three";
+import { showOnPage } from "./sim.js";
+import { makeVRScene } from "./vr_scene.js";
 
 const recBtn = document.getElementById("rec");
 const vrBtn = document.getElementById("vr");
@@ -72,7 +100,7 @@ let info = {}, pcOk = true;   // newest answer from the PC: status and live coor
 function setInfo(answer) {
   info = answer;
   pcOk = true;
-  window.sim?.update(answer);   // pose the 3D twin (sim.js) with the real joint angles
+  showOnPage(answer);   // pose the 3D twin on this page (sim.js) with the real joint angles
 }
 
 // Quarter turns of the camera picture (0-3). B changes it; the browser remembers it for next time.
@@ -80,96 +108,15 @@ function load(key) { try { return localStorage.getItem(key); } catch { return nu
 function save(key, value) { try { localStorage.setItem(key, value); } catch {} }
 let turns = Number(load("turns")) || 0;
 
-// ---- Flat pictures floating in VR: the camera screen and the info panel. ----
-function makeScreen(gl) {
-  const vertexShader = `
-    attribute vec2 corner;           // one corner of the picture: x and y go from -0.5 to 0.5
-    uniform mat4 projection, view;   // the headset's lens and eye position, new every frame
-    uniform vec3 size;               // width, height, distance (meters)
-    uniform vec2 offset;             // where its middle is (meters, right and up)
-    uniform vec2 turn;               // cos and sin of the picture's rotation
-    varying vec2 uv;                 // which spot of the picture belongs at this corner
-    void main() {
-      vec2 s = vec2(corner.x, -corner.y);   // spot on the screen, measured from its middle (picture rows go down)
-      uv = 0.5 + vec2(turn.x * s.x + turn.y * s.y, turn.x * s.y - turn.y * s.x);   // rotate it
-      gl_Position = projection * view * vec4(corner * size.xy + offset, -size.z, 1.0);
-    }`;
-  const fragmentShader = `
-    precision mediump float;
-    uniform sampler2D picture;
-    varying vec2 uv;
-    void main() { gl_FragColor = texture2D(picture, uv); }`;
-  const program = gl.createProgram();
-  for (const [type, source] of [[gl.VERTEX_SHADER, vertexShader], [gl.FRAGMENT_SHADER, fragmentShader]]) {
-    const shader = gl.createShader(type);
-    gl.shaderSource(shader, source);
-    gl.compileShader(shader);
-    gl.attachShader(program, shader);
-  }
-  gl.linkProgram(program);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
-  gl.useProgram(program);
-  // The 4 corners, in the order WebGL needs to draw 2 triangles.
-  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), gl.STATIC_DRAW);
-  const corner = gl.getAttribLocation(program, "corner");
-  gl.enableVertexAttribArray(corner);
-  gl.vertexAttribPointer(corner, 2, gl.FLOAT, false, 0, 0);
-  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-  const where = (name) => gl.getUniformLocation(program, name);
-  return { projection: where("projection"), view: where("view"), size: where("size"), offset: where("offset"), turn: where("turn") };
+// Depth view: the camera window shows the D435's depth picture instead (red = near, blue = far).
+// X in VR or the button here switches it. The PC only makes the depth picture while it's shown.
+let depthView = false;
+const depthBtn = document.getElementById("depth");
+function toggleDepth() {
+  depthView = !depthView;
+  depthBtn.classList.toggle("on", depthView);
 }
-
-// A "texture" is a picture stored on the graphics card.
-function makeTexture(gl) {
-  const texture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  return texture;
-}
-
-// ---- Info panel: status and the arm's live coordinates, drawn as text. ----
-const panel = document.createElement("canvas");
-panel.width = 1024;
-panel.height = 320;
-const TITLES = {
-  following: "● Following your hand",
-  "let go": "Holding still · grip to move",
-  "waiting for headset": "Waiting for hand data",
-  "tracking glitch": "Tracking lost · release, then press A",
-  "motion off": "Motion OFF · press A to arm",
-};
-const mm = (v) => String(v).padStart(5);
-function infoLines(info, pcOk) {
-  if (!pcOk) return ["PC link lost · spotter: check the arm and E-stop", "", "", "", ""];
-  if (!info.tool) return ["Starting...", "", "", "", ""];
-  const title = (info.live ? "" : "DRY RUN · ") + (TITLES[info.status] ?? info.status) + (info.limit ? `  ·  at ${info.limit}` : "");
-  const joints = info.joints ? "Joints " + info.joints.map((a, i) => `J${i + 1} ${Math.round(a)}°`).join("  ") : "Joints  (dry run: arm not connected)";
-  return [title,
-          `Tool    X ${mm(info.tool[0])}   Y ${mm(info.tool[1])}   Z ${mm(info.tool[2])} mm  Turn ${mm(info.yaw)}°`,
-          `Target  X ${mm(info.target[0])}   Y ${mm(info.target[1])}   Z ${mm(info.target[2])} mm  Turn ${mm(info.target_yaw)}°`,
-          joints,
-          `Gripper ${info.gripper === "closed" ? "CLOSED (grabbing)" : "OPEN"}   ·   Motion ${info.motion ? "ARMED (A = off)" : "OFF (A = arm)"}`];
-}
-function drawPanel(lines) {
-  const c = panel.getContext("2d");
-  c.fillStyle = "#06111a";
-  c.fillRect(0, 0, panel.width, panel.height);
-  c.strokeStyle = "#4fd8ff";   // HUD style: thin glowing cyan frame and text
-  c.shadowColor = "#4fd8ff";
-  c.shadowBlur = 10;
-  c.lineWidth = 3;
-  c.strokeRect(6, 6, panel.width - 12, panel.height - 12);
-  c.fillStyle = "#4fd8ff";
-  c.font = "600 40px 'Segoe UI', system-ui, sans-serif";
-  c.fillText(lines[0], 32, 58);
-  c.shadowBlur = 0;
-  c.fillStyle = "#9fe9ff";
-  c.font = "30px Consolas, ui-monospace, monospace";
-  lines.slice(1).forEach((line, i) => c.fillText(line, 32, 116 + i * 52));   // 4 lines below the title
-}
+depthBtn.onclick = toggleDepth;
 
 // ---- Camera: always ask for the newest picture, one at a time, so a backlog (and lag) never builds up. ----
 // It runs whenever this page is open, so the PC shows (and can record) the live view too.
@@ -177,7 +124,7 @@ const cam = { pixels: null, width: 0, height: 0, number: 0, count: 0 };
 async function cameraLoop() {
   while (true) {
     try {
-      const res = await fetch("/camera?after=" + cam.number);
+      const res = await fetch(`/camera?after=${cam.number}${depthView ? "&view=depth" : ""}`);
       if (!res.ok) throw new Error("no picture yet");
       const pixels = new Uint8Array(await res.arrayBuffer());
       [cam.number, cam.width, cam.height] = res.headers.get("X-Picture").split(" ").map(Number);
@@ -194,7 +141,7 @@ cameraLoop();
 const view = document.getElementById("camview"), viewCtx = view.getContext("2d");
 const HUD_LONG = 960, HUD_SHORT = 540;   // HUD canvas size (pixels); a quarter turn swaps them
 const raw = document.createElement("canvas");   // the camera picture, un-turned
-let rawPixels = null, drawnNumber = 0, hudVersion = 0;
+let rawPixels = null, drawnNumber = 0;
 function drawLiveView() {
   if (cam.pixels && cam.number !== drawnNumber) {   // copy a NEW picture into `raw` (RGB -> RGBA)
     drawnNumber = cam.number;
@@ -213,8 +160,7 @@ function drawLiveView() {
     [view.width, view.height] = [W, H];   // never resize in the middle of a recording
   }
   drawHUD(viewCtx, view.width, view.height, cam.pixels ? raw : null, cam.width || 640, cam.height || 360,
-          turns, info, pcOk, performance.now());
-  hudVersion++;
+          turns, info, pcOk, depthView);
 }
 
 // ---- Calibration: buttons, and clicking the dot in the live view. ----
@@ -223,13 +169,13 @@ async function calibStep(step, body = {}) {
   try {
     const res = await fetch("/calib/" + step, { method: "POST", body: JSON.stringify(body) });
     calMsg.textContent = (await res.json()).say;
-  } catch { calMsg.textContent = "The PC program isn't answering."; }
+  } catch { calMsg.textContent = "The PC program isn't responding."; }
 }
 document.getElementById("caltouch").onclick = () => calibStep("touch");
 document.getElementById("calsolve").onclick = () => calibStep("solve");
 document.getElementById("calreset").onclick = () => calibStep("reset");
 view.onclick = (e) => {
-  if (!info.calib?.dot) return (calMsg.textContent = "First touch the dot and press Record touch.");
+  if (!info.calib?.dot) return (calMsg.textContent = "Record a touch first.");
   const r = view.getBoundingClientRect();   // the canvas may be shown smaller than its real size
   const px = (e.clientX - r.left) * view.width / r.width, py = (e.clientY - r.top) * view.height / r.height;
   const [u, v] = hudTransform(view.width, view.height, cam.width || 640, cam.height || 360, turns).toCam(px, py);
@@ -246,16 +192,25 @@ setInterval(() => {
 
 // ---- VR (or see-through AR, if this headset link allows it). ----
 let mode = "immersive-vr";
-if (!navigator.xr) vrBtn.textContent = "This browser has no WebXR. Use Chrome.";
+if (!navigator.xr) {
+  vrBtn.textContent = "VR not available";
+  msg.textContent = "Open this page in Chrome.";
+}
 (async () => {
   if (!navigator.xr) return;
   const ar = await navigator.xr.isSessionSupported("immersive-ar").catch(() => false);
   const vr = await navigator.xr.isSessionSupported("immersive-vr").catch(() => false);
   mode = ar ? "immersive-ar" : "immersive-vr";
   vrBtn.disabled = !(ar || vr);
-  vrBtn.textContent = ar ? "2. Enter VR (see-through)" : vr ? "2. Enter VR" : "VR not found. Is Link on in the headset?";
-  msg.textContent = ar ? "See-through is available." : "See-through isn't available through Link here, so VR uses a dark room.";
+  vrBtn.textContent = ar || vr ? "Enter VR" : "No headset";
+  if (!(ar || vr)) msg.textContent = "Turn on Link in the headset, then reload.";
 })();
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });   // alpha: see-through can show the room
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType("local");   // origin = where your head was when VR started
+const vr = makeVRScene(view);                 // vr_scene.js: camera window, 3D twin, controller ghosts
+const eyes = new THREE.PerspectiveCamera(70, 1, 0.05, 20);   // three.js turns this into the headset's two eyes
 
 vrBtn.onclick = async () => {
   let session;
@@ -265,42 +220,44 @@ vrBtn.onclick = async () => {
     mode = "immersive-vr";   // see-through refused: fall back to plain VR
     session = await navigator.xr.requestSession(mode);
   }
-  const seeThrough = mode === "immersive-ar";
-  const gl = document.createElement("canvas").getContext("webgl", { xrCompatible: true });
-  session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
-  const space = await session.requestReferenceSpace("local");   // origin = where your head was when VR started
-  const screen = makeScreen(gl);
-  const camTexture = makeTexture(gl), panelTexture = makeTexture(gl), simTexture = makeTexture(gl);
-  let lastSim = 0, hasSim = false;
-  let sending = false, lastSent = 0, hasPicture = false, shownHud = 0, bWasDown = false;
+  vr.setSeeThrough(mode === "immersive-ar");
+  await renderer.xr.setSession(session);
+  const space = renderer.xr.getReferenceSpace();
+  let sending = false, lastSent = 0, bWasDown = false, xWasDown = false;
   let leftSource = null, rightSource = null, lastBuzz = 0, lastHum = 0, wasHolding = false, wasArmed = false;
   let alarmed = false, quietUntil = 0, gripWasDown = false, secondTickAt = 0;
   const buzzCheck = {};   // per hand: can this browser buzz that controller? (shown on the PC page)
-  let lastHudDraw = 0;
+  let lastHudDraw = 0, frames = 0, frameWork = 0;
   inVR = true;
   let clicks = 0, triggerWasDown = false;   // left trigger clicks; the PC flips the gripper on each new one
   let armClicks = 0, aWasDown = false;      // A presses; the PC arms/disarms motion on each new one
-  let lastPanel = 0, statsText = "";
 
-  session.requestAnimationFrame(function onFrame(time, frame) {
-    session.requestAnimationFrame(onFrame);   // ask for the next frame (72-90 per second)
+  renderer.setAnimationLoop((time, frame) => {   // once per headset frame (72-90 per second)
+    if (!frame) return;   // three.js also calls this once outside the headset's frames; skip that call
+    const started = performance.now();
     let grip = false, pos = null, yaw = null, pressedA = false;
+    const poses = { left: null, right: null };   // where each controller is (for the ghosts), or null
     for (const source of session.inputSources) {
       if (!source.gamepad) continue;
       if (!(source.handedness in buzzCheck)) {   // a controller just showed up: buzz it once, so you can feel it works
         const motor = source.gamepad.hapticActuators?.length || source.gamepad.vibrationActuator;
-        buzzCheck[source.handedness] = motor ? "available" : "NOT available in this browser";
+        buzzCheck[source.handedness] = motor ? "ok" : "unavailable";
         buzz(source, 0.5, 150);
       }
+      const pose = source.gripSpace ? frame.getPose(source.gripSpace, space) : null;
       if (source.handedness === "left") {
         leftSource = source;
+        poses.left = pose;
         const trigger = source.gamepad.buttons[0]?.pressed ?? false;   // button 0 = the trigger
         if (trigger && !triggerWasDown) { clicks++; buzz(source, 0.3, 30); }   // one click per press, with a small tick
         triggerWasDown = trigger;
+        const xDown = source.gamepad.buttons[4]?.pressed ?? false;   // button 4 on the left controller = X
+        if (xDown && !xWasDown) toggleDepth();
+        xWasDown = xDown;
       }
       if (source.handedness !== "right" || !source.gripSpace) continue;
       rightSource = source;
-      const pose = frame.getPose(source.gripSpace, space);
+      poses.right = pose;
       if (pose) {
         const p = pose.transform.position;   // meters: x = right, y = up, -z = forward
         pos = [p.x, p.y, p.z];
@@ -323,20 +280,11 @@ vrBtn.onclick = async () => {
     }
     gripWasDown = grip;
     if (secondTickAt && time >= secondTickAt) { secondTickAt = 0; buzz(rightSource, 0.5, 40); }
-    const layer = session.renderState.baseLayer;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-    gl.clearColor(0.05, 0.06, 0.08, seeThrough ? 0 : 1);   // see-through: clear = show the real room
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    // Redraw the HUD here (about 30 times a second), then copy it to the graphics card.
+    // Redraw the HUD about 30 times a second (as often as the camera sends pictures).
     if (time - lastHudDraw > 33) {
       lastHudDraw = time;
       drawLiveView();
-    }
-    if (hudVersion !== shownHud) {
-      gl.bindTexture(gl.TEXTURE_2D, camTexture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, view);
-      hasPicture = true;
-      shownHud = hudVersion;
+      vr.hudChanged();
     }
     // Alarm = one long, strong buzz in BOTH hands: the arm stopped on its own (PC link lost, program stopped,
     // or tracking lost while motion was armed). Let go and look at the arm.
@@ -363,40 +311,8 @@ vrBtn.onclick = async () => {
       wasHolding = !!info.holding;
       if (!!info.motion !== wasArmed) { wasArmed = !!info.motion; buzz(rightSource, 0.4, 60); }   // tick when A arms/disarms
     }
-    // Redraw the info panel about 10 times a second.
-    if (time - lastPanel > 100) {
-      lastPanel = time;
-      const lines = infoLines(info, pcOk);
-      drawPanel(lines);
-      gl.bindTexture(gl.TEXTURE_2D, panelTexture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, panel);
-      statsText = lines.join("\n");
-    }
-    // Copy the 3D twin's picture about 15 times a second.
-    if (window.sim && time - lastSim > 66) {
-      lastSim = time;
-      gl.bindTexture(gl.TEXTURE_2D, simTexture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, window.sim.canvas);
-      hasSim = true;
-    }
-    // Draw the pictures once for each eye: camera in the middle, twin to its right, info panel below.
-    const viewer = frame.getViewerPose(space);
-    if (viewer) {
-      const shape = view.width / view.height;   // the HUD is already turned, so just match its shape
-      const [w, h] = shape >= 1 ? [SCREEN_SIZE, SCREEN_SIZE / shape] : [SCREEN_SIZE * shape, SCREEN_SIZE];
-      const panelY = SCREEN_HEIGHT - h / 2 - 0.03 - PANEL_H / 2;   // just below the camera screen
-      const simH = SCREEN_SIZE * 9 / 16, simW = simH * 640 / 440;    // twin screen, same height as a wide camera screen
-      const simX = w / 2 + 0.04 + simW / 2;                          // just right of the camera screen
-      for (const view of viewer.views) {
-        const vp = layer.getViewport(view);
-        gl.viewport(vp.x, vp.y, vp.width, vp.height);
-        gl.uniformMatrix4fv(screen.projection, false, view.projectionMatrix);
-        gl.uniformMatrix4fv(screen.view, false, view.transform.inverse.matrix);
-        if (hasPicture) drawPicture(gl, screen, camTexture, w, h, SCREEN_HEIGHT, 0);
-        if (hasSim) drawPicture(gl, screen, simTexture, simW, simH, SCREEN_HEIGHT, 0, simX);
-        drawPicture(gl, screen, panelTexture, PANEL_W, PANEL_H, panelY, 0);
-      }
-    }
+    vr.update(info, poses, grip);
+    renderer.render(vr.scene, eyes);
     // Send the hand to the PC about 30 times a second; its answer is the live coordinates.
     if (!sending && time - lastSent > 33) {
       sending = true;
@@ -407,16 +323,21 @@ vrBtn.onclick = async () => {
         .catch(() => (pcOk = false))
         .finally(() => (sending = false));
     }
+    frames++;
+    frameWork += performance.now() - started;
   });
+  // Once a second, in the page header: is VR keeping up? A headset frame lasts 11-14 ms; the work should stay well under that.
   const showStats = setInterval(() => {
-    document.getElementById("stats").textContent = `${statsText}\nCamera into VR: ${cam.count} pictures/s` +
-      `\nController buzz: left ${buzzCheck.left ?? "not seen yet"} · right ${buzzCheck.right ?? "not seen yet"}`;
-    cam.count = 0;
+    document.getElementById("stats").textContent =
+      `VR ${frames} fps · ${(frameWork / Math.max(frames, 1)).toFixed(1)} ms/frame · Camera ${cam.count} fps · ` +
+      `Buzz L ${buzzCheck.left ?? "–"} R ${buzzCheck.right ?? "–"}`;
+    cam.count = frames = frameWork = 0;
   }, 1000);
   session.onend = () => {
+    renderer.setAnimationLoop(null);
     inVR = false;
     clearInterval(showStats);
-    msg.textContent = "Left VR.";
+    document.getElementById("stats").textContent = "Not in VR";
     if (recorder?.state === "recording") recorder.stop();   // leaving VR also stops the recording
   };
 };
@@ -430,14 +351,6 @@ function buzz(source, strength, ms) {
   else pad.vibrationActuator?.playEffect?.("dual-rumble", { duration: ms, strongMagnitude: strength, weakMagnitude: strength })?.catch?.(() => {});
 }
 
-function drawPicture(gl, screen, texture, width, height, y, quarterTurns, x = 0) {
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.uniform3f(screen.size, width, height, SCREEN_DISTANCE);
-  gl.uniform2f(screen.offset, x, y);
-  gl.uniform2f(screen.turn, Math.cos(quarterTurns * Math.PI / 2), Math.sin(quarterTurns * Math.PI / 2));
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-}
-
 // ---- Record the D435 live view (picture + coordinates strip) straight from this page into media/. ----
 const camRecBtn = document.getElementById("camrec");
 camRecBtn.onclick = () => {
@@ -448,14 +361,14 @@ camRecBtn.onclick = () => {
   const chunks = [];
   camRecorder.ondataavailable = (e) => chunks.push(e.data);
   camRecorder.onstop = async () => {
-    camRecBtn.textContent = "Record D435 view";
-    msg.textContent = "Saving D435 video...";
+    camRecBtn.textContent = "Record camera";
+    msg.textContent = "Saving…";
     const ext = type.startsWith("video/mp4") ? "mp4" : "webm";
     const res = await fetch("/d435." + ext, { method: "POST", body: new Blob(chunks, { type }) });
-    msg.textContent = res.ok ? "D435 video saved to this week's media/ folder." : "Saving the video failed.";
+    msg.textContent = res.ok ? "Saved to media/." : "Couldn't save the video.";
   };
   camRecorder.start(1000);   // hand over the video in 1-second pieces
-  camRecBtn.textContent = "■ Stop and save D435 video";
+  camRecBtn.textContent = "Stop and save";
 };
 
 // ---- Recording (optional): record a window, like "Oculus Mirror", and save it to media/. ----
@@ -470,15 +383,15 @@ recBtn.onclick = async () => {
   recorder.ondataavailable = (e) => chunks.push(e.data);
   recorder.onstop = async () => {
     stream.getTracks().forEach((t) => t.stop());
-    recBtn.textContent = "Record headset mirror (optional)";
-    msg.textContent = "Saving video...";
+    recBtn.textContent = "Record headset";
+    msg.textContent = "Saving…";
     const ext = type.startsWith("video/mp4") ? "mp4" : "webm";
     const res = await fetch("/video." + ext, { method: "POST", body: new Blob(chunks, { type }) });
-    msg.textContent = res.ok ? "Video saved to this week's media/ folder." : "Saving the video failed.";
+    msg.textContent = res.ok ? "Saved to media/." : "Couldn't save the video.";
   };
   stream.getVideoTracks()[0].onended = () => recorder.state === "recording" && recorder.stop();   // "Stop sharing" was clicked
   recorder.start(1000);   // hand over the video in 1-second pieces
-  recBtn.textContent = "Stop recording and save";
+  recBtn.textContent = "Stop and save";
 };
 </script>
 </body>

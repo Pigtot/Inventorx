@@ -9,10 +9,12 @@ This manual is how we run it: you wear the Quest Pro, hold the **right grip**, a
 
 **Controller buzz update (2026-10-26):** three new buzzes in E3: a buzz when VR starts (to check vibration works), an alarm when the arm stops on its own, and a "not now" double tick. Tested with fake controllers on the Mac in a dry run; **not tested yet in the headset**.
 
+**VR view update (2026-10-26):** the 3D twin is now a real 3D model in VR (not a flat picture), the controllers show as ghosts with a "rubber band" while you drive, **X** switches the camera to a depth view, and the page and HUD were simplified. Tested with a fake headset on the Mac in a dry run; **not tested yet in the headset**. After updating, press **Ctrl + Shift + R** once on the page so Chrome drops its old copies of the files.
+
 **Earlier:** the first version moved the real arm with the headset. During that test the arm reported an error, which switched it out of teleop mode. After that, the moves piled up in a queue, so **the arm lagged and kept moving after we let go**. Version 2 fixes this: it stops the instant you let go and quits on any arm error. Version 2 passed fake-hand tests on the PC; **not tested yet** on the real arm.
 This replaces the Wi-Fi plan in Lesson 2 (Parts B and E): school Wi-Fi doesn't work for this, so **everything is connected by cable.**
 
-Code: [`code/vr_teleop/`](code/vr_teleop/): `vr_teleop.py` (the program), `safety.py` (hand checks and the independent stop timer), `index.html` (the VR page), `sim.js` (the 3D twin), `hud.js` (the HUD), `calib.py` (the camera calibration math), `meshes/` (UFACTORY's official xArm 6 and gripper CAD parts, from the `xArm-Developer/xarm_ros2` GitHub repository), and `lib/` (three.js 0.160.0, the 3D library).
+Code: [`code/vr_teleop/`](code/vr_teleop/): `vr_teleop.py` (the program), `safety.py` (hand checks and the independent stop timer), `index.html` (the page and the VR loop), `vr_scene.js` (what you see in VR), `sim.js` (the 3D twin), `hud.js` (the HUD), `calib.py` (the camera calibration math), `meshes/` (UFACTORY's official xArm 6 and gripper CAD parts, from the `xArm-Developer/xarm_ros2` GitHub repository), and `lib/` (three.js 0.160.0, the 3D library).
 
 ---
 
@@ -82,9 +84,9 @@ cd "Week01_2026-10-19\code\vr_teleop"
 3. On the PC, in **Chrome**, open `http://localhost:8000`.
 4. (Optional) Start a recording (see section F).
 5. **Face the same way as the arm's front.** Your "forward" becomes the arm's forward.
-6. Click **2. Enter VR**. With the headset on you can't click, so a partner clicks, or you click and then put the headset on.
-7. The camera picture floats about 1 m in front of you. The **3D twin** of the arm floats to its right: the official xArm 6 CAD model, posed live from the real joint angles. A blue dot shows where the arm is heading while you hold the grip. The PC page shows the same twin next to the D435 view.
-8. You should feel a short buzz in each hand. Spotter: the PC page's last line should say **Controller buzz: left available · right available**. If it says **NOT available**, or the operator feels nothing, the buzzes in E3 won't work in this browser. Everything else still works.
+6. Click **Enter VR**. With the headset on you can't click, so a partner clicks, or you click and then put the headset on.
+7. The camera window floats 1 m ahead, a little below eye level. The **3D twin** stands beside the window on your right, at 40% size and about the same distance, placed so no arm pose can cover the window: the official xArm 6 CAD model, posed live from the real joint angles and turned so its front matches yours. A blue dot shows where the arm is heading while you hold the grip, and the ring on its floor is the reach limit. You also see a ghost of each controller.
+8. You should feel a short buzz in each hand. Spotter: the top of the PC page should say **Buzz L ok R ok**. If it says **unavailable**, or the operator feels nothing, the buzzes in E3 won't work in this browser. Everything else still works. The same line shows the VR frame rate and the work per frame (it should stay well under 11 ms).
 9. **Release the right grip**, then press **A** to arm motion. After a tracking fault, release first, then make a new A press.
 
 ### E. Controls
@@ -97,6 +99,7 @@ cd "Week01_2026-10-19\code\vr_teleop"
 | **Twist your hand** (while holding the grip) | The gripper turns the same amount around the vertical axis (1:1). It always stays pointing straight down. Limit: ±170°. |
 | **Left trigger click** | Close the gripper on a block. Click again to open it. |
 | **Press B** | Turn the camera picture a quarter turn. Turn it until the arm's front is at the top. It's remembered. |
+| **Press X** | Switch the camera window between the color and depth pictures (also the **Depth view** button on the PC page). |
 | **Hold the Meta button** | Re-center the view in front of you. |
 
 **Curved response (not linear).** The farther your hand goes from where you gripped, the bigger each centimeter counts:
@@ -110,12 +113,7 @@ cd "Week01_2026-10-19\code\vr_teleop"
 
 To make a long trip: grip, reach, let go, bring your hand back, and grip again.
 
-**The info panel** under the camera picture shows:
-- the status: following / holding still / at a limit / tracking glitch / PC not responding
-- the tool's **live X, Y, Z** in mm, and its turn in degrees
-- the target
-- the 6 joint angles
-- the gripper state
+**Your right controller's ghost** shows what the arm will do: white = motion off, cyan = armed, bright cyan = the arm is following you, amber = at a limit. While it follows you, a thin **rubber band** runs from where you gripped to your hand. The longer the band, the farther the arm moves.
 
 **First live test:** hold the grip and move your hand only **2–3 cm**. Check that the arm goes the same direction (forward, left, up) before making bigger moves.
 
@@ -127,13 +125,16 @@ To make a long trip: grip, reach, let go, bring your hand back, and grip again.
 5. Close the gripper (left trigger), then lift.
 
 ### E2. The HUD (heads-up display)
-The camera picture has an Iron Man-style overlay (in VR, on the PC page, and in recordings):
-- **Landing reticle:** the spinning cyan ring marks **exactly where the gripper will touch down**, with `LAND ↓ 42 mm` = how far the gripper tip is above that spot. It turns white when closer than 40 mm and amber while holding a block. It needs the camera calibration (section H). Until then a dashed ring says `CALIBRATE CAMERA`.
+The camera picture has a simple overlay (in VR, on the PC page, and in recordings):
+- **Top left:** the status, like `Motion off · Press A` or `Following your hand`. Cyan = motion armed, amber = `PC link lost`.
+- **Top right:** whether the camera is calibrated.
+- **Landing ring:** marks **exactly where the gripper will touch down**, with `↓ 42 mm` = how far the gripper tip is above that spot. It turns white when closer than 40 mm and amber while holding a block. It needs the camera calibration (section H). Until then a dashed ring says `Calibrate the camera`.
 - **Small diamond:** the gripper tip itself, if it's in the picture.
-- **Left ladder:** the tool's height from the floor limit (amber line) up to the ceiling.
-- **Right:** gripper opening (%) and the turn compass.
-- **Bottom bar:** X, Y, Z, the 6 joint angles, and MOTION ARMED or SAFE.
-- **Amber warnings:** the limit you're pushing against, or `PC LINK LOST`.
+- **Left scale:** the tool's height, from the floor limit (amber line) up to the ceiling.
+- **Right:** gripper opening (%) and which way the gripper is turned.
+- **Bottom:** X, Y, Z and the 6 joint angles.
+- **Amber warning:** the limit you're pushing against, like `At reach limit`.
+- **Depth view (X):** the picture is colored by distance from the camera: red at 15 cm, through yellow and green, to blue at 70 cm. Black = no reading. A key at the bottom says so.
 
 ### E3. Force feedback (controller shake)
 The arm has no force sensor, so the controllers *simulate* force from what the program knows:
@@ -145,25 +146,25 @@ The arm has no force sensor, so the controllers *simulate* force from what the p
 | Strong "clunk" | left | The gripper just closed on something. |
 | Light hum every ~0.4 s | left | The gripper is holding something. |
 | Short tick | left / right | Gripper click registered / motion armed or disarmed. |
-| **Long, strong buzz** | both | **The arm stopped on its own:** tracking was lost while motion was armed, the PC link was lost, or the program stopped. Let go and look at the arm and the panel. |
+| **Long, strong buzz** | both | **The arm stopped on its own:** tracking was lost while motion was armed, the PC link was lost, or the program stopped. Let go and look at the arm. |
 | 2 quick ticks | right | "Not now": you gripped while motion is OFF (press A first), or pressed A while still gripping (let go first). |
 | Short buzz when VR starts | both | Vibration check (step D8). |
 
 Vibration depends on the browser. The Quest Browser supports it ([Meta's docs](https://developers.meta.com/horizon/documentation/web/webxr-pro-controller)). We don't know yet whether Chrome on the PC passes it through Link, and step D8 checks that.
 
 ### F. Recording (optional)
-**Record the D435 live view (easiest):** the PC page shows the camera live under **"D435 live view"**. It uses the same turn as in VR, with a strip of status, X/Y/Z, gripper state, and the time.
-1. Click **Record D435 view**. It works in or out of VR.
-2. Click **■ Stop and save D435 video** when done.
+**Record the camera view (easiest):** the PC page's **Camera** card shows the camera with the HUD, turned the same as in VR.
+1. Click **Record camera**. It works in or out of VR.
+2. Click **Stop and save** when done.
 3. It saves to this week's `media/` folder as `d435_<date>_<time>.mp4` (640×440, 30 fps, medium quality, about 11 MB per minute).
 
-**Record the headset view instead** (what the operator sees, including the info panel):
+**Record the headset view instead** (what the operator sees, including the 3D twin):
 1. Open Meta's mirror window, which shows the headset view on the PC:
    ```
    & "C:\Program Files\Meta Horizon\Support\oculus-diagnostics\OculusMirror.exe"
    ```
-2. On the page, click **Record headset mirror**. In Chrome's picker, choose the **Window** tab, then **Oculus Mirror**.
-3. Do your session. The video saves by itself when you leave VR, or when you click **Stop recording and save**.
+2. On the page, click **Record headset**. In Chrome's picker, choose the **Window** tab, then **Oculus Mirror**.
+3. Do your session. The video saves by itself when you leave VR, or when you click **Stop and save**.
 4. Videos go to this week's `media/` folder as `vr_<date>_<time>.mp4` (720p, 30 fps, about 20 MB per minute).
 
 ### G. Shut down
@@ -234,8 +235,9 @@ The safe workspace for the tool tip is in the arm's coordinates: X = forward, Y 
 | Page says "VR not found" | Start Link in the headset first (section D, step 2), then refresh the page. |
 | "Port 8000 is busy" | Another copy is already running. Press Ctrl + C in that window first. |
 | Status line says `camera: 0 fps` | Check the D435 USB cable. The program restarts the camera by itself every 2 s. |
-| Panel says "PC program not responding" | The PowerShell program stopped or crashed. Check its window. |
-| Panel says "Following" but the arm doesn't move | Is it a dry run (no `--live`)? Did the spotter press Enter at the safety question? Look for an error code in the window. |
+| HUD says "PC link lost" | The PowerShell program stopped or crashed. Check its window. |
+| The page looks broken or blank after an update | Press **Ctrl + Shift + R** once, so Chrome loads the new files. |
+| HUD says "Following your hand" but the arm doesn't move | Is it a dry run (no `--live`)? Did the spotter press Enter at the safety question? Look for an error code in the window. |
 | "The arm reported error ..." and the program quit | Look the error up in UFactory Studio and clear it there. Then restart the program. |
 | "Stop timer expired", "Control loop stalled", or "Hand command expired" | Keep the grip released. Check the headset link and the Python window, then restart the program. A fresh A press does not clear a watchdog fault. |
 | "Tracking glitch" but the program is still running | Wait for good tracking. Release the grip, then press A again before gripping. |

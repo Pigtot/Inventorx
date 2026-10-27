@@ -27,6 +27,7 @@ from datetime import datetime
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import numpy as np
 
@@ -58,6 +59,11 @@ GRIPPER_SPEED = 3000
 YAW_LIMIT = 170   # degrees: the gripper's turn stays within -170..170, so it never spins the long way around
 
 CAM_W, CAM_H, CAM_FPS = 640, 360, 30   # camera picture in VR: low quality on purpose, so it stays light and smooth
+# Depth view: distances from DEPTH_NEAR to DEPTH_FAR (mm) get colors red, yellow, green, cyan, blue.
+DEPTH_NEAR, DEPTH_FAR = 150, 700
+DEPTH_COLORS = np.array([[255, 60, 40], [255, 220, 0], [60, 220, 90], [0, 200, 255], [40, 70, 255]])
+DEPTH_LUT = np.stack([np.interp(np.linspace(0, 4, 256), range(5), DEPTH_COLORS[:, c]) for c in range(3)],
+                     axis=1).astype(np.uint8)   # 256 colors blended between those 5
 PORT = 8000
 HERE = Path(__file__).resolve().parent
 MEDIA = HERE.parents[1] / "media"   # this week's media/ folder
@@ -88,6 +94,10 @@ class Handler(SimpleHTTPRequestHandler):
     answers with the live coordinates, and saves finished videos (/video.mp4)."""
     protocol_version = "HTTP/1.1"   # reuse one connection instead of opening 30 new ones a second
 
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-cache")   # Chrome always checks for newer files, so updates never mix with old ones
+        super().end_headers()
+
     def do_GET(self):
         if self.path == "/status":   # read-only: the live coordinates, for the PC page's live view
             reply = json.dumps(report).encode()
@@ -99,10 +109,13 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if not self.path.startswith("/camera"):
             return super().do_GET()   # a normal file, like index.html
-        after = int(self.path.partition("after=")[2] or 0)   # the picture number Chrome already has
+        query = parse_qs(urlsplit(self.path).query)
+        after = int(query.get("after", ["0"])[0])   # the picture number Chrome already has
         with new_picture:   # wait (up to 1 s) for a newer picture, so Chrome never gets the same one twice
             new_picture.wait_for(lambda: camera["id"] > after, timeout=1)
-            data, number = camera["data"], camera["id"]
+            data, depth, number = camera["data"], camera["depth"], camera["id"]
+        if query.get("view") == ["depth"] and depth is not None:
+            data = depth_picture(depth)   # made only when someone is looking at it
         if data is None:
             self.send_response(503)   # 503 = "not ready": no camera picture yet
             self.send_header("Content-Length", "0")
@@ -217,6 +230,14 @@ def camera_loop():
             time.sleep(2)
 
 
+def depth_picture(depth):
+    """The depth picture (mm) as raw RGB bytes, the same format as a color picture. No reading (0 mm) = black."""
+    step = np.clip((depth - DEPTH_NEAR) * (255 / (DEPTH_FAR - DEPTH_NEAR)), 0, 255).astype(np.uint8)
+    rgb = DEPTH_LUT[step]
+    rgb[depth == 0] = 0
+    return rgb.tobytes()
+
+
 def tool_pose():
     """The tool's pose now: x, y, z (mm), roll, pitch, yaw (deg). Dry run: where it would be."""
     return list(arm.position) if arm else [*target, 180.0, 0.0, yaw]
@@ -228,30 +249,30 @@ def calibrate(step, msg):
     pairs = calibration["pairs"]
     if step == "touch":   # the gripper tip is touching the dot: remember where the dot is (base coordinates)
         calibration["mark"], calibration["pairs"] = tool_pose()[:3], []
-        return {"ok": True, "say": "Dot recorded. Lift up, then click the dot from 4 or more different spots."}
+        return {"ok": True, "say": "Touch recorded. Now click the dot from 4 or more spots."}
     if step == "click":   # the dot, seen by the camera from where the arm is now
         if calibration["mark"] is None:
-            return {"ok": False, "say": "First touch the dot with the gripper tip and press Record touch."}
+            return {"ok": False, "say": "Record a touch first."}
         if camera["depth"] is None:
             return {"ok": False, "say": "No camera picture yet."}
         d = calib.depth_at(camera["depth"], msg["u"], msg["v"])
         if not d:
-            return {"ok": False, "say": "No depth reading at that spot. Lift the arm a little and click again."}
+            return {"ok": False, "say": "No depth there. Lift the arm a little and click again."}
         in_cam = calib.deproject(msg["u"], msg["v"], d, camera["intr"])
         in_tool = (np.linalg.inv(calib.pose_matrix(*tool_pose())) @ [*calibration["mark"], 1])[:3]
         pairs.append((in_cam, in_tool))
-        return {"ok": True, "say": f"Point {len(pairs)} saved ({d:.0f} mm away). Move somewhere new and click again."}
+        return {"ok": True, "say": f"Point {len(pairs)} saved ({d:.0f} mm away). Move and click again."}
     if step == "solve":
         try:
             T, rms = calib.solve(pairs)
         except (ValueError, np.linalg.LinAlgError) as exc:
-            return {"ok": False, "say": f"Calibration rejected: {exc} Saved calibration kept."}
+            return {"ok": False, "say": f"Rejected: {exc} The saved calibration is kept."}
         info = calib.save(CALIB_FILE, T, rms, len(pairs))
         T_tool_cam, calib_info = T, info
-        return {"ok": True, "say": f"Calibrated from {len(pairs)} points. Fit error {rms:.1f} mm (under 5 is good)."}
+        return {"ok": True, "say": f"Calibrated from {len(pairs)} points. Error {rms:.1f} mm."}
     if step == "reset":
         calibration.update(mark=None, pairs=[])
-        return {"ok": True, "say": "Calibration steps cleared (the saved calibration is kept)."}
+        return {"ok": True, "say": "Cleared. The saved calibration is kept."}
     return {"ok": False, "say": f"Unknown step {step}."}
 
 
