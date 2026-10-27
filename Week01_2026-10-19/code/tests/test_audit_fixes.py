@@ -127,7 +127,7 @@ class FakeAPI:
     def set_fence_mode(self, enabled):
         code = self.record('set_fence_mode', enabled)
         if not code: self.c.settings[5] = int(enabled)
-        return code
+        return [code]   # like the real SDK 1.18.4, which returns a list here
     def clean_error(self): return self.record('clean_error')
     def motion_enable(self, enabled): return self.record('motion_enable', enabled)
     def set_gripper_mode(self, mode): return self.record('set_gripper_mode', mode)

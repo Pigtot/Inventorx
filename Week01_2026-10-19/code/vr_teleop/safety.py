@@ -20,6 +20,8 @@ class CommandCancelled(SafetyError):
 
 
 def checked(code, action):
+    if isinstance(code, (list, tuple)) and code:   # SDK 1.18.4's set_fence_mode returns [code], not code
+        code = code[0]
     if code != 0:
         raise SafetyError(f"{action} failed (SDK code {code}).")
 
