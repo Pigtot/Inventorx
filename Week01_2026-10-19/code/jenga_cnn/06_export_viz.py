@@ -26,6 +26,7 @@ from torchvision.transforms import v2
 
 from jenga_model import (CATEGORIES, DATA, IMG, box_error_px, camera_matrix, crop_square, describe, load_model, prepare,
                          rotation_error_deg, solve_pose_on_table, top_face)
+from real_photos import load_crops
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE.parents[1] / "media/jenga_net_explorer.html"
@@ -96,13 +97,12 @@ for c in range(3):
 real_csv, real_dir = HERE / "real_crops.csv", DATA / "real"
 credits = []
 if real_csv.exists() and (real_dir / "credits.csv").exists():
-    photo_info = {int(r["number"]): r for r in csv.DictReader(open(real_dir / "credits.csv"))}
-    files = {n: r["file"] for n, r in photo_info.items()}
-    used = dict.fromkeys(int(p["photo"]) for p in csv.DictReader(open(real_csv)))
+    picks, photo_info = load_crops(real_csv, real_dir / "credits.csv")
+    used = dict.fromkeys(p["source"] for p in picks)
     # Creative Commons licenses require credit wherever the photos appear
     credits = [{k: photo_info[n][k] for k in ("title", "creator", "license", "source")} for n in used]
-    for p in csv.DictReader(open(real_csv)):
-        sq = crop_square(cv2.imread(str(real_dir / "photos" / files[int(p["photo"])])), int(p["cx"]), int(p["cy"]), int(p["side"]))
+    for p in picks:
+        sq = crop_square(cv2.imread(str(real_dir / "photos" / photo_info[p["source"]]["file"])), int(p["cx"]), int(p["cy"]), int(p["side"]))
         items.append(dict(kind="real", jpeg=cv2.imencode(".jpg", cv2.resize(sq, (256, 256)), [cv2.IMWRITE_JPEG_QUALITY, 88])[1].tobytes(),
                           x=torch.from_numpy(sq[:, :, ::-1].copy()).permute(2, 0, 1),
                           cat=None if p["label"] == "unsure" else CATEGORIES.index(p["label"]), note=p["note"], top=None))

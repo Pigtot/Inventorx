@@ -1,22 +1,22 @@
-photo,cx,cy,side,label,note
-197,381,308,260,side,logo on top; front face taller than top
-197,675,500,300,standing,upright block in a messy pile
-197,757,487,280,standing,upright block next to a bag
-197,478,624,300,unsure,diagonal; logo on top but top face looks wide
-197,176,690,300,unsure,points toward camera; touches bottom edge
-338,230,440,460,flat,"""Troll 4 one round"": writing on the wide face"
-338,550,535,440,flat,"""NELAN IS MEAN"": logo on the narrow front face"
-338,495,410,440,flat,"""Tell someone"": logo on the narrow front face"
-338,815,272,380,flat,pink drawing on the wide face; logo on the side
-338,636,278,420,flat,"""Meet your"": writing on the wide face"
-338,468,232,420,flat,"""Give your"": logo on the narrow left face"
-150,160,170,320,side,logo on a narrow top face
-150,338,222,340,side,diagonal; logo on top
-150,220,415,400,side,logo on top; wide front face
-150,302,500,360,side,logo on top
-30,165,395,330,flat,dark wood (not Jenga color)
-30,196,520,330,flat,dark wood
-30,757,297,300,flat,dark wood; neighbors touching
-240,200,722,340,flat,"painted fish on the wide face; dark photo"
-240,368,843,380,flat,painted butterfly; dark photo
-303,150,305,300,unsure,steep low camera angle
+photo,source,cx,cy,side,label,note
+197,https://www.flickr.com/photos/88846242@N00/5323447537,381,308,260,side,logo on top; front face taller than top
+197,https://www.flickr.com/photos/88846242@N00/5323447537,675,500,300,standing,upright block in a messy pile
+197,https://www.flickr.com/photos/88846242@N00/5323447537,757,487,280,standing,upright block next to a bag
+197,https://www.flickr.com/photos/88846242@N00/5323447537,478,624,300,unsure,diagonal; logo on top but top face looks wide
+197,https://www.flickr.com/photos/88846242@N00/5323447537,176,690,300,unsure,points toward camera; touches bottom edge
+338,https://www.flickr.com/photos/42982698@N00/9832691095,230,440,460,flat,"""Troll 4 one round"": writing on the wide face"
+338,https://www.flickr.com/photos/42982698@N00/9832691095,550,535,440,flat,"""NELAN IS MEAN"": logo on the narrow front face"
+338,https://www.flickr.com/photos/42982698@N00/9832691095,495,410,440,flat,"""Tell someone"": logo on the narrow front face"
+338,https://www.flickr.com/photos/42982698@N00/9832691095,815,272,380,flat,pink drawing on the wide face; logo on the side
+338,https://www.flickr.com/photos/42982698@N00/9832691095,636,278,420,flat,"""Meet your"": writing on the wide face"
+338,https://www.flickr.com/photos/42982698@N00/9832691095,468,232,420,flat,"""Give your"": logo on the narrow left face"
+150,https://www.flickr.com/photos/15216811@N06/31913579393,160,170,320,side,logo on a narrow top face
+150,https://www.flickr.com/photos/15216811@N06/31913579393,338,222,340,side,diagonal; logo on top
+150,https://www.flickr.com/photos/15216811@N06/31913579393,220,415,400,side,logo on top; wide front face
+150,https://www.flickr.com/photos/15216811@N06/31913579393,302,500,360,side,logo on top
+30,https://www.flickr.com/photos/23377996@N00/2366615948,165,395,330,flat,dark wood (not Jenga color)
+30,https://www.flickr.com/photos/23377996@N00/2366615948,196,520,330,flat,dark wood
+30,https://www.flickr.com/photos/23377996@N00/2366615948,757,297,300,flat,dark wood; neighbors touching
+240,https://www.flickr.com/photos/19232773@N00/3468240385,200,722,340,flat,painted fish on the wide face; dark photo
+240,https://www.flickr.com/photos/19232773@N00/3468240385,368,843,380,flat,painted butterfly; dark photo
+303,https://www.flickr.com/photos/82439748@N00/2138902659,150,305,300,unsure,steep low camera angle

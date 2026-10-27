@@ -31,6 +31,7 @@ from pathlib import Path
 import numpy as np
 
 import calib   # calib.py, next to this file: camera-to-gripper calibration math
+from safety import ArmWatchdog, COMMAND_TIMEOUT, CommandCancelled, HandInput, SafetyError, checked, reading
 
 ARM_IP = "192.168.1.217"  # from the label on our control box
 MOVE_ARM = "--live" in sys.argv   # without --live, the arm is never touched
@@ -62,8 +63,7 @@ HERE = Path(__file__).resolve().parent
 MEDIA = HERE.parents[1] / "media"   # this week's media/ folder
 CALIB_FILE = HERE / "camera_calibration.json"   # where the D435 sits on the gripper (made by the calibration steps)
 
-latest = {"grip": False, "pos": None, "yaw": 0.0, "clicks": 0, "arm_clicks": 0, "time": 0.0}   # newest message from the headset
-lock = threading.Lock()   # stops two threads from using `latest` at the same moment
+hands = HandInput()   # validates headset messages even while the control loop is busy
 report = {}   # what the VR page shows (status and live coordinates), rebuilt 30 times a second
 camera = {"data": None, "id": 0, "fps": 0,    # newest D435 picture (raw RGB bytes) and its number
           "depth": None, "intr": None}         # its depth picture (mm, lined up with the color) and lens numbers
@@ -119,9 +119,7 @@ class Handler(SimpleHTTPRequestHandler):
         reply = b""
         if self.path == "/pose":
             msg = json.loads(body)
-            with lock:
-                latest.update(grip=msg["grip"], pos=msg["pos"], yaw=msg.get("yaw") or 0.0,
-                              clicks=msg.get("clicks", 0), arm_clicks=msg.get("arm_clicks", 0), time=time.time())
+            hands.update(msg)
             reply = json.dumps(report).encode()   # answer with the live coordinates for the VR display
         elif self.path.startswith("/calib/"):   # calibration steps, from the buttons on the PC page
             reply = json.dumps(calibrate(self.path[len("/calib/"):], json.loads(body or b"{}"))).encode()
@@ -156,18 +154,25 @@ def curve(move):
 
 def keep_safe(x, y, z):
     """Pull a target back inside the safe workspace. Also returns which limit it hit ("" = none)."""
+    if not all(math.isfinite(v) for v in (x, y, z)):
+        raise SafetyError("Non-finite movement target.")
     limit = ""
     if not FLOOR <= z <= CEILING:
         z, limit = min(max(z, FLOOR), CEILING), "height limit"
-    out = math.hypot(x, y)   # how far out from the base's center line
-    farthest = math.sqrt(REACH ** 2 - z ** 2)   # higher up, the arm can't reach as far out
-    if out < 1:
-        x, y, out = NEAR, 0.0, NEAR
-    if not NEAR <= out <= farthest:
-        k = min(max(out, NEAR), farthest) / out
-        x, y, limit = x * k, y * k, "reach limit"
     if x < FRONT:
         x, limit = FRONT, "front limit"
+    out = math.hypot(x, y)   # how far out from the base's center line
+    farthest = math.sqrt(REACH ** 2 - z ** 2)   # higher up, the arm can't reach as far out
+    if out < NEAR:
+        x, y, limit = x * NEAR / out, y * NEAR / out, "reach limit"
+    elif out > farthest:
+        # Shrinking radially can push X behind FRONT. In that case, stay on
+        # the front plane and shrink Y to the intersection with the reach circle.
+        k = farthest / out
+        x, y, limit = x * k, y * k, "reach limit"
+        if x < FRONT:
+            x = FRONT
+            y = math.copysign(math.sqrt(max(0.0, farthest ** 2 - FRONT ** 2)), y)
     return [x, y, z], limit
 
 
@@ -237,10 +242,12 @@ def calibrate(step, msg):
         pairs.append((in_cam, in_tool))
         return {"ok": True, "say": f"Point {len(pairs)} saved ({d:.0f} mm away). Move somewhere new and click again."}
     if step == "solve":
-        if len(pairs) < 3:
-            return {"ok": False, "say": f"Need at least 3 points (have {len(pairs)})."}
-        T, rms = calib.solve(pairs)
-        T_tool_cam, calib_info = T, calib.save(CALIB_FILE, T, rms, len(pairs))
+        try:
+            T, rms = calib.solve(pairs)
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            return {"ok": False, "say": f"Calibration rejected: {exc} Saved calibration kept."}
+        info = calib.save(CALIB_FILE, T, rms, len(pairs))
+        T_tool_cam, calib_info = T, info
         return {"ok": True, "say": f"Calibrated from {len(pairs)} points. Fit error {rms:.1f} mm (under 5 is good)."}
     if step == "reset":
         calibration.update(mark=None, pairs=[])
@@ -248,169 +255,211 @@ def calibrate(step, msg):
     return {"ok": False, "say": f"Unknown step {step}."}
 
 
-def connect_arm():
+def connect_arm(factory=None, confirm=input):
     """Connect, ask the spotter, then turn on the arm with its own fence and speed cap.
-    Returns the arm and its old safety settings (so we can put them back at the end)."""
-    from xarm.wrapper import XArmAPI   # only needed when the arm really moves
+    Returns the command connection, stop connection, and old safety settings."""
+    if factory is None:
+        from xarm.wrapper import XArmAPI   # only needed when the arm really moves
+        factory = XArmAPI
+    arm = stop_arm = old = None
     try:
-        arm = XArmAPI(ARM_IP)
-    except Exception:
-        print("Could not connect. Run 01_hello_arm.py first to check the connection.")
-        sys.exit(1)
-    print("\nLIVE: the arm WILL move, but only while the grip is held.")
-    try:
-        input("SPOTTER: hand on the E-stop and workspace clear? Press Enter to turn on the arm (Ctrl+C = quit)...")
-    except KeyboardInterrupt:
-        arm.disconnect()
-        sys.exit(0)
-    x, y, z = arm.get_position()[1][:3]
-    if keep_safe(x, y, z)[1]:
-        print(f"The tool (x {x:.0f}, y {y:.0f}, z {z:.0f}) is outside the safe workspace. Move it inside first (Lesson 5).")
-        arm.disconnect()
-        sys.exit(1)
-    if arm.collision_sensitivity == 0:
-        print("WARNING: collision detection is OFF on the arm. Turn it on in UFactory Studio.")
-    old = arm.get_reduced_states()[1]   # the arm's safety settings before we change them
-    arm.clean_error()
-    arm.motion_enable(True)
-    arm.set_reduced_max_tcp_speed(ARM_MAX_SPEED)
-    arm.set_reduced_tcp_boundary(FENCE)
-    arm.set_reduced_mode(True)   # turns on the speed cap and the fence values
-    arm.set_fence_mode(True)     # the arm stops itself if the tool leaves FENCE
-    arm.set_mode(7)   # mode 7 = online planning: each new target smoothly replaces the last one
-    arm.set_state(0)
-    arm.set_gripper_mode(0)
-    arm.set_gripper_enable(True)
-    arm.set_gripper_speed(GRIPPER_SPEED)
-    time.sleep(0.5)
-    return arm, old
-
-
-def stop_here(arm):
-    """Let go = stop now: drop the rest of the move, then get ready for the next grip."""
-    arm.set_state(4)   # state 4 = stop
-    arm.set_mode(7)
-    arm.set_state(0)
+        # Disable the SDK's implicit pause/queue waits. The watchdog has its own
+        # command socket, so an SDK response timeout cannot block a stop request.
+        arm = factory(ARM_IP, check_is_pause=False, check_cmdnum_limit=False)
+        stop_arm = factory(ARM_IP, enable_report=False, check_is_pause=False, check_cmdnum_limit=False)
+        stop_arm.set_timeout(COMMAND_TIMEOUT)
+        print("\nLIVE: the arm WILL move, but only while motion is armed and the grip is held.")
+        confirm("SPOTTER: hand on the E-stop and workspace clear? Press Enter to set up the arm (Ctrl+C = quit)...")
+        checked(stop_arm.set_state(4), "Stop before setup")
+        x, y, z = reading(arm.get_position(), "Read start position")[:3]
+        if keep_safe(x, y, z)[1]:
+            raise SafetyError("Tool is outside the safe workspace. Move it inside first (Lesson 5).")
+        if arm.collision_sensitivity == 0:
+            print("WARNING: collision detection is OFF on the arm. Turn it on in UFactory Studio.")
+        old = reading(arm.get_reduced_states(), "Read old safety settings")
+        if len(old) < 7:
+            old = None
+            raise SafetyError("The controller did not return complete safety settings.")
+        checked(arm.clean_error(), "Clear old arm error")
+        checked(stop_arm.set_state(4), "Keep arm stopped during setup")
+        checked(arm.set_reduced_max_tcp_speed(ARM_MAX_SPEED), "Set speed cap")
+        checked(arm.set_reduced_tcp_boundary(FENCE), "Set fence boundary")
+        checked(arm.set_reduced_mode(True), "Enable reduced mode")
+        checked(arm.set_fence_mode(True), "Enable fence")
+        current = reading(arm.get_reduced_states(), "Verify safety settings")
+        if (len(current) < 7 or current[0] != 1 or current[5] != 1
+                or list(current[1]) != FENCE or not math.isclose(current[2], ARM_MAX_SPEED)):
+            raise SafetyError("The controller's safety settings do not match the requested fence and speed cap.")
+        checked(arm.motion_enable(True), "Enable motors")
+        checked(arm.set_mode(7), "Select teleop mode")
+        checked(stop_arm.set_state(4), "Keep arm stopped until a fresh grip")
+        checked(arm.set_gripper_mode(0), "Set gripper mode")
+        checked(arm.set_gripper_enable(True), "Enable gripper")
+        checked(arm.set_gripper_speed(GRIPPER_SPEED), "Set gripper speed")
+        time.sleep(0.5)   # allow the report stream to reflect the new mode
+        if arm.mode != 7:
+            raise SafetyError("The arm did not enter teleop mode.")
+        arm.set_timeout(COMMAND_TIMEOUT)
+        return arm, stop_arm, old
+    except BaseException:
+        if stop_arm:
+            try:
+                checked(stop_arm.set_state(4), "Stop failed setup")
+                if old is not None:
+                    restore(stop_arm, old)
+            except Exception as exc:
+                print(f"Could not restore setup: {exc} Check UFactory Studio; keep the E-stop ready.")
+        if arm:
+            arm.disconnect()
+        if stop_arm:
+            stop_arm.disconnect()
+        raise
 
 
 def restore(arm, old):
-    """Put the arm back the way we found it."""
-    arm.set_mode(0)   # back to normal position control
-    arm.set_state(0)
-    arm.set_fence_mode(bool(old[5]))
-    arm.set_reduced_tcp_boundary(old[1])
-    arm.set_reduced_max_tcp_speed(old[2])
-    arm.set_reduced_mode(bool(old[0]))
+    """Restore safety settings while leaving the arm stopped, never ready to resume."""
+    checked(arm.set_state(4), "Stop before restoring settings")
+    checked(arm.set_mode(0), "Restore position mode")
+    checked(arm.set_fence_mode(bool(old[5])), "Restore fence switch")
+    checked(arm.set_reduced_tcp_boundary(old[1]), "Restore fence boundary")
+    checked(arm.set_reduced_max_tcp_speed(old[2]), "Restore speed cap")
+    checked(arm.set_reduced_mode(bool(old[0])), "Restore reduced-mode switch")
 
 
-try:
-    server = Server(("127.0.0.1", PORT), partial(Handler, directory=HERE))   # 127.0.0.1 = this PC only
-except OSError:
-    print(f"Port {PORT} is busy: vr_teleop.py is probably already running in another window. Close that one first.")
-    sys.exit(1)
-# Serve the page and camera right away, so the operator can get into VR while the spotter gets ready.
-threading.Thread(target=server.serve_forever, daemon=True).start()
-threading.Thread(target=camera_loop, daemon=True).start()
-print(f"Open http://localhost:{PORT} in Chrome on this PC. Press Ctrl+C here to quit.")
-arm, old = connect_arm() if MOVE_ARM else (None, None)
-start = arm.get_position()[1] if arm else [300, 0, 300, 180, 0, 0]   # x, y, z (mm), roll, pitch, yaw (deg)
-target, yaw, limit = start[:3], start[5], ""   # yaw = which way the gripper is turned (degrees)
-hand0 = arm0 = last_pos = None   # where the hand and the tool were when the grip was pressed; the last hand spot
-arm_yaw0 = twist = last_hand_yaw = 0.0   # gripper turn at grip start; how far the hand has twisted since; last hand reading
-gripper = "open" if not arm or arm.get_gripper_position()[1] > GRIPPER_OPEN / 2 else "closed"
-last_clicks = None   # the page counts left-trigger clicks; each new click flips the gripper
-motion_on, last_arm_clicks = False, None   # A button arms/disarms motion; it always starts disarmed
-grip_open, last_grip_read, holding, tick = (1.0 if gripper == "open" else 0.0), None, False, 0
-print("LIVE: the arm is on. Hold the grip to move it.\n" if arm else "DRY RUN: the arm will not move.\n")
 
-try:
-    while True:
-        time.sleep(1 / 30)   # 30 updates per second
-        with lock:
-            grip, pos, hand_yaw, clicks = latest["grip"], latest["pos"], latest["yaw"], latest["clicks"]
-            arm_clicks = latest["arm_clicks"]
-            age = time.time() - latest["time"]
-        if arm and arm.error_code:
-            print(f"\nThe arm reported error {arm.error_code}. Stopping. Look it up in UFactory Studio, then restart.")
-            break
-        status = "following" if grip else "let go"
-        if age > 0.3:
-            grip, status = False, "waiting for headset"   # dead-man: no message for 0.3 s = act as if you let go
-            last_clicks = last_arm_clicks = None   # the page may reload and count clicks from 0 again
-            motion_on = False   # lost contact = disarm; press A again once you're back
-        elif grip and last_pos and math.dist(pos, last_pos) > 0.25:
-            grip, status = False, "tracking glitch"   # a 25 cm jump between two messages isn't a real hand move
-        last_pos = pos
-        if age <= 0.3:   # A button: each new press arms or disarms motion (never on old or missing messages)
-            if last_arm_clicks is not None and arm_clicks != last_arm_clicks:
-                motion_on = not motion_on
-            last_arm_clicks = arm_clicks
-        if not motion_on and age <= 0.3:
-            grip, status = False, "motion off"   # disarmed: the grip, twist, and gripper do nothing
-        if age <= 0.3:   # left trigger: each new click flips the gripper (never on old or missing messages)
-            if motion_on and last_clicks is not None and clicks != last_clicks:
-                gripper = "closed" if gripper == "open" else "open"
-                if arm:
-                    arm.set_gripper_position(GRIPPER_CLOSED if gripper == "closed" else GRIPPER_OPEN, wait=False)
-            last_clicks = clicks
-        if not grip:
-            if hand0 is not None and arm:
-                stop_here(arm)   # just let go: stop where the arm is now
-            hand0 = None
-        else:
-            if hand0 is None:   # grip just pressed: remember where the hand and the tool are right now
-                if arm and arm.mode != 7:
-                    print(f"\nThe arm left teleop mode (mode {arm.mode}). Stopping, so moves can't pile up. Restart.")
-                    break
-                now = arm.get_position()[1] if arm else [*target, 0, 0, yaw]
-                hand0, arm0, arm_yaw0, twist, last_hand_yaw = pos, now[:3], now[5], 0.0, hand_yaw
-            move = curve(hand_to_arm(*(p - p0 for p, p0 in zip(pos, hand0))))
-            target, limit = keep_safe(*(a + m for a, m in zip(arm0, move)))
-            # Twist your hand and the gripper turns the same amount (1:1). It keeps pointing straight down.
-            # Add up small steps (each one -180..180), so turning past "behind you" can't flip to the other side.
-            twist += (hand_yaw - last_hand_yaw + 180) % 360 - 180
-            last_hand_yaw = hand_yaw
-            yaw = arm_yaw0 + twist
-            if abs(yaw) > YAW_LIMIT:   # hold at the limit; twisting back moves it again right away
-                yaw, limit = math.copysign(YAW_LIMIT, yaw), "rotation limit"
-                twist = yaw - arm_yaw0
-            if arm:
-                speed = SLOW_SPEED if target[2] < FLOOR + SLOW_ZONE else SPEED   # gentle near the table
-                code = arm.set_position(*target, start[3], start[4], yaw, speed=speed, wait=False)
-                if code != 0:
-                    print(f"\nThe arm answered code {code} (error {arm.error_code}). Stopping. Look the error up in UFactory Studio.")
-                    break
-        if not grip:
-            limit = ""
-        # The gripper: how open it really is, read 5 times a second. "Holding" = told to close, but it stopped
-        # short of closed and isn't moving any more, so something (a block) is between the fingers.
-        tick += 1
-        if tick % 6 == 0:
-            reading = arm.get_gripper_position()[1] if arm else (GRIPPER_OPEN if gripper == "open" else GRIPPER_CLOSED)
-            if reading is not None:
-                holding = gripper == "closed" and reading > 30 and last_grip_read is not None and abs(reading - last_grip_read) < 5
-                grip_open, last_grip_read = reading / GRIPPER_OPEN, reading
-        # Where the gripper will land in the picture (needs the calibration and a depth picture).
-        landing = tip_px = None
-        if T_tool_cam is not None and camera["depth"] is not None:
-            landing = calib.landing_point(T_tool_cam, camera["depth"], camera["intr"])
-            tip_px = calib.tip_pixel(T_tool_cam, camera["intr"])
-        tool = arm.position if arm else [*target, 0, 0, yaw]   # where the tool really is (dry run: where it would be)
-        report = {"live": bool(arm), "status": status, "limit": limit, "gripper": gripper, "motion": motion_on,
-                  "grip_open": round(grip_open, 2), "holding": holding,
-                  "landing": [round(landing[0]), round(landing[1]), round(landing[2])] if landing else None,
-                  "tip_px": [round(tip_px[0]), round(tip_px[1])] if tip_px else None,
-                  "calib": {"done": T_tool_cam is not None, "rms": calib_info["rms_mm"] if calib_info else None,
-                            "dot": calibration["mark"] is not None, "points": len(calibration["pairs"])},
-                  "tool": [round(t) for t in tool[:3]], "target": [round(t) for t in target],
-                  "yaw": round(tool[5]), "target_yaw": round(yaw),
-                  "joints": [round(a, 1) for a in arm.angles[:6]] if arm else None}
-        print(f"\r{'ARMED' if motion_on else 'off':5} {status:20} tool x, y, z (mm): {report['tool']}  turn {report['yaw']:4}°  gripper {gripper:6} {limit:14} camera: {camera['fps']} fps   ", end="")
-except KeyboardInterrupt:
-    pass
-finally:
-    server.shutdown()
-    if arm:
-        restore(arm, old)
-        print("\nArm settings restored. Error code (0 = no error):", arm.error_code)
-        arm.disconnect()
+def main():
+    global arm, target, yaw, report
+    server = None
+    stop_arm = old = watchdog = None
+    try:
+        try:
+            server = Server(("127.0.0.1", PORT), partial(Handler, directory=HERE))
+        except OSError:
+            print(f"Port {PORT} is busy: close the other copy of vr_teleop.py first.")
+            return 1
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        threading.Thread(target=camera_loop, daemon=True).start()
+        print(f"Open http://localhost:{PORT} in Chrome on this PC. Press Ctrl+C here to quit.")
+        if MOVE_ARM:
+            arm, stop_arm, old = connect_arm()
+            watchdog = ArmWatchdog(arm, stop_arm, hands)
+            watchdog.start()
+        start = reading(arm.get_position(), "Read start pose") if arm else [300, 0, 300, 180, 0, 0]
+        target, yaw, limit = start[:3], start[5], ""
+        hand0 = arm0 = hand_epoch = None
+        arm_yaw0 = twist = last_hand_yaw = 0.0
+        gripper = "open" if not arm or reading(arm.get_gripper_position(), "Read gripper") > GRIPPER_OPEN / 2 else "closed"
+        last_clicks = None
+        grip_open, last_grip_read, holding, tick = (1.0 if gripper == "open" else 0.0), None, False, 0
+        print("LIVE: release the grip, then press A to arm motion.\n" if arm else "DRY RUN: the arm will not move.\n")
+        while True:
+            time.sleep(1 / 30)
+            if watchdog:
+                watchdog.pulse()
+            try:
+                hand = hands.snapshot()
+                grip, pos, hand_yaw = hand["grip"], hand["pos"], hand["yaw"]
+                motion_on, status, epoch = hand["motion"], hand["status"], hand["epoch"]
+                if hand0 is not None and (not grip or epoch != hand_epoch):
+                    if watchdog:
+                        watchdog.stop()   # stay stopped; only a NEW valid grip can make the arm ready again
+                    hand0 = None
+                if hand["fresh"]:
+                    if motion_on and last_clicks is not None and hand["clicks"] > last_clicks:
+                        wanted = "closed" if gripper == "open" else "open"
+                        if watchdog:
+                            watchdog.command(epoch, "Move gripper", arm.set_gripper_position,
+                                             GRIPPER_CLOSED if wanted == "closed" else GRIPPER_OPEN,
+                                             wait=False, grip=False)
+                        gripper = wanted
+                    last_clicks = hand["clicks"]
+                else:
+                    last_clicks = None
+                if grip:
+                    if hand0 is None:
+                        now = reading(arm.get_position(), "Read tool pose") if arm else [*target, 0, 0, yaw]
+                        if watchdog:
+                            watchdog.command(epoch, "Ready for fresh grip", arm.set_state, 0)
+                        hand0, arm0, hand_epoch = pos, now[:3], epoch
+                        arm_yaw0, twist, last_hand_yaw = now[5], 0.0, hand_yaw
+                    move = curve(hand_to_arm(*(p - p0 for p, p0 in zip(pos, hand0))))
+                    target, limit = keep_safe(*(a + m for a, m in zip(arm0, move)))
+                    twist += (hand_yaw - last_hand_yaw + 180) % 360 - 180
+                    last_hand_yaw = hand_yaw
+                    yaw = arm_yaw0 + twist
+                    if abs(yaw) > YAW_LIMIT:
+                        yaw, limit = math.copysign(YAW_LIMIT, yaw), "rotation limit"
+                        twist = yaw - arm_yaw0
+                    if watchdog:
+                        speed = SLOW_SPEED if target[2] < FLOOR + SLOW_ZONE else SPEED
+                        watchdog.command(epoch, "Move tool", arm.set_position,
+                                         *target, start[3], start[4], yaw, speed=speed, wait=False)
+                else:
+                    limit = ""
+                tick += 1
+                if tick % 6 == 0:
+                    result = arm.get_gripper_position() if arm else (0, GRIPPER_OPEN if gripper == "open" else GRIPPER_CLOSED)
+                    value = reading(result, "Read gripper opening")
+                    if watchdog:
+                        watchdog.check()
+                    if value is not None:
+                        holding = gripper == "closed" and value > 30 and last_grip_read is not None and abs(value - last_grip_read) < 5
+                        grip_open, last_grip_read = value / GRIPPER_OPEN, value
+                landing = tip_px = None
+                if T_tool_cam is not None and camera["depth"] is not None:
+                    landing = calib.landing_point(T_tool_cam, camera["depth"], camera["intr"])
+                    tip_px = calib.tip_pixel(T_tool_cam, camera["intr"])
+                tool = arm.position if arm else [*target, 0, 0, yaw]
+                report = {"live": bool(arm), "status": status, "limit": limit, "gripper": gripper, "motion": motion_on,
+                          "grip_open": round(grip_open, 2), "holding": holding,
+                          "landing": [round(landing[0]), round(landing[1]), round(landing[2])] if landing else None,
+                          "tip_px": [round(tip_px[0]), round(tip_px[1])] if tip_px else None,
+                          "calib": {"done": T_tool_cam is not None, "rms": calib_info["rms_mm"] if calib_info else None,
+                                    "dot": calibration["mark"] is not None, "points": len(calibration["pairs"])},
+                          "tool": [round(t) for t in tool[:3]], "target": [round(t) for t in target],
+                          "yaw": round(tool[5]), "target_yaw": round(yaw),
+                          "joints": [round(a, 1) for a in arm.angles[:6]] if arm else None}
+                print(f"\r{'ARMED' if motion_on else 'off':5} {status:20} tool x, y, z (mm): {report['tool']}  turn {report['yaw']:4}°  gripper {gripper:6} {limit:14} camera: {camera['fps']} fps   ", end="")
+            except CommandCancelled:
+                # Letting go during an SDK reply is normal. Stop, discard that
+                # grip's target, and wait for fresh input instead of exiting.
+                if watchdog:
+                    watchdog.stop()
+                hand0 = None
+                last_clicks = None
+    except KeyboardInterrupt:
+        return 0
+    except Exception as exc:
+        print(f"\nStopped: {exc}")
+        return 1
+    finally:
+        report = dict(report, motion=False, status="stopped")
+        # Stop before waiting for the web server or restoring settings. Do not
+        # clear a watchdog fault or re-enable the arm during shutdown.
+        if stop_arm:
+            try:
+                checked(stop_arm.set_state(4), "Stop on exit")
+            except Exception as exc:
+                print(f"\nSTOP NOT CONFIRMED: {exc} Use the E-stop.")
+        if arm:
+            try:
+                arm.disconnect()   # cancel pending commands before stopping the watchdog
+            except Exception as exc:
+                print(f"\nCould not close the command connection: {exc} Use the E-stop.")
+        if watchdog:
+            watchdog.close()
+        if stop_arm:
+            try:
+                restore(stop_arm, old)
+                print("\nSafety settings restored; arm remains stopped.")
+            except Exception as exc:
+                print(f"\nCould not restore settings: {exc} Check UFactory Studio.")
+            finally:
+                stop_arm.disconnect()
+        if server:
+            server.shutdown()
+            server.server_close()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

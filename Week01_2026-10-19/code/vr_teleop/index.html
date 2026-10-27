@@ -29,7 +29,7 @@
 </head>
 <body>
 <h1>xArm VR Teleop</h1>
-<p>Press <b>A</b> to arm motion (it starts OFF; press A again to turn it off).
+<p>Release the right grip, then press <b>A</b> to arm motion (it starts OFF; press A again to turn it off).
 Hold the <b>right grip</b> and the arm follows your hand. Let go and it stops.
 Small hand moves are fine and precise; reaching farther moves the arm much more.<br>
 <b>Twist your hand</b> while holding the grip: the gripper turns the same amount (it stays pointing down).<br>
@@ -137,12 +137,12 @@ const TITLES = {
   following: "● Following your hand",
   "let go": "Holding still · grip to move",
   "waiting for headset": "Waiting for hand data",
-  "tracking glitch": "Tracking glitch · let go, grip again",
+  "tracking glitch": "Tracking lost · release, then press A",
   "motion off": "Motion OFF · press A to arm",
 };
 const mm = (v) => String(v).padStart(5);
 function infoLines(info, pcOk) {
-  if (!pcOk) return ["PC program not responding · arm stops by itself", "", "", "", ""];
+  if (!pcOk) return ["PC link lost · spotter: check the arm and E-stop", "", "", "", ""];
   if (!info.tool) return ["Starting...", "", "", "", ""];
   const title = (info.live ? "" : "DRY RUN · ") + (TITLES[info.status] ?? info.status) + (info.limit ? `  ·  at ${info.limit}` : "");
   const joints = info.joints ? "Joints " + info.joints.map((a, i) => `J${i + 1} ${Math.round(a)}°`).join("  ") : "Joints  (dry run: arm not connected)";

@@ -18,6 +18,7 @@ import numpy as np
 import torch
 
 from jenga_model import CATEGORIES, DATA, EDGES, crop_square, load_model, prepare
+from real_photos import load_crops
 
 HERE = Path(__file__).resolve().parent
 REAL = DATA / "real"
@@ -25,9 +26,8 @@ OUT = HERE.parents[1] / "media/jenga_real_test.png"
 TILE = 256
 BLUE = (214, 120, 42)   # OpenCV colors are BGR
 
-files = {int(r["number"]): r["file"] for r in csv.DictReader(open(REAL / "credits.csv"))}
-picks = list(csv.DictReader(open(HERE / "real_crops.csv")))
-squares = [crop_square(cv2.imread(str(REAL / "photos" / files[int(p["photo"])])), int(p["cx"]), int(p["cy"]), int(p["side"]))
+picks, photo_info = load_crops(HERE / "real_crops.csv", REAL / "credits.csv")
+squares = [crop_square(cv2.imread(str(REAL / "photos" / photo_info[p["source"]]["file"])), int(p["cx"]), int(p["cy"]), int(p["side"]))
            for p in picks]
 x = torch.from_numpy(np.stack([s[:, :, ::-1] for s in squares]).copy()).permute(0, 3, 1, 2)   # BGR -> RGB
 
@@ -53,7 +53,7 @@ for i, (p, sq) in enumerate(zip(picks, squares)):
     cv2.putText(tile, f"#{i + 1} guess: {guess} {probs[i].max():.0%}{mark}", (6, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
     cv2.putText(tile, f"label: {p['label']}", (6, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
     tiles.append(tile)
-    results.append(dict(number=i + 1, photo=int(p["photo"]), label=p["label"], guess=guess,
+    results.append(dict(number=i + 1, photo=int(p["photo"]), source=p["source"], label=p["label"], guess=guess,
                         probs=probs[i].tolist(), box=px, note=p["note"]))
     print(f"#{i + 1:2d} photo {p['photo']:>3}  label {p['label']:8s}  guess {guess:8s} "
           f"({', '.join(f'{c} {v:.0%}' for c, v in zip(CATEGORIES, probs[i].tolist()))})")
