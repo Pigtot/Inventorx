@@ -137,7 +137,7 @@ async function cameraLoop() {
 }
 cameraLoop();
 
-// ---- HUD live view (hud.js): the D435 picture with the Iron Man-style overlay. Shown here, in VR, and recorded. ----
+// ---- HUD live view (hud.js): the D435 picture with its overlay. Shown here, in VR, and recorded. ----
 const view = document.getElementById("camview"), viewCtx = view.getContext("2d");
 const HUD_LONG = 960, HUD_SHORT = 540;   // HUD canvas size (pixels); a quarter turn swaps them
 const raw = document.createElement("canvas");   // the camera picture, un-turned

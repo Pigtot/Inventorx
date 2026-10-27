@@ -62,8 +62,8 @@ To put a new video on GitHub, add a line for it at the bottom of the `.gitignore
 - [Lesson 2: Setting up the Quest Pro](Lesson02_QuestPro_Teleop_Setup.md)
 - [Lesson 3: VLA models (AI that controls robots)](Lesson03_VLA_Models.md)
 - [Lesson 4: The Jenga block finder](Lesson04_Jenga_CNN.md)
-- [Lesson 5: Plan for training an AI without VR](Lesson05_VLA_Plan_Without_VR.md)
 - [Lesson 5: VR teleop manual](Lesson05_VR_Teleop_Manual.md)
+- [Lesson 6: Plan for training an AI without VR](Lesson06_VLA_Plan_Without_VR.md)
 
 ## Daily logs
 

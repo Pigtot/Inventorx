@@ -1,4 +1,4 @@
-# Lesson 5: Starting Our VLA Project (No Headset Needed)
+# Lesson 6: Starting Our VLA Project (No Headset Needed)
 
 **Where we are:** Lesson 3 explained what a VLA is. On 2026-10-25 we ran SmolVLA once (`code/04_smolvla_first_look.py`). It predicted moves in about 1 second, but the numbers meant nothing for our arm, because it had only ever seen SO-100 hobby arms.
 **This lesson:** what we do to teach it *our* arm, and why each step matters. The Quest headset isn't needed until much later.

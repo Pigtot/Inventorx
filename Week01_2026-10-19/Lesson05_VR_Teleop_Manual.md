@@ -223,7 +223,8 @@ The safe workspace for the tool tip is in the arm's coordinates: X = forward, Y 
 |---|---|---|
 | `FINE`, `FAST`, `FAR` | `vr_teleop.py` | The curve: gain for small moves (0.5), gain for big moves (3.0), and the hand distance where it's fully fast (300 mm). |
 | `CAM_W, CAM_H, CAM_FPS = 640, 360, 30` | `vr_teleop.py` | Camera picture in VR. Lower = lighter, higher = sharper. We measured `848, 480, 60` working too. |
-| `SCREEN_SIZE`, `SCREEN_DISTANCE` | `index.html` | Size of the floating picture and how far away it is (meters). |
+| `WINDOW_SIZE`, `WINDOW_AT` | `vr_scene.js` | Size of the camera window and where it floats (meters). |
+| `TWIN_AT`, `TWIN_SCALE` | `vr_scene.js` | Where the 3D twin stands, and its size. Moving it can make it cover the camera window. |
 
 ---
 
