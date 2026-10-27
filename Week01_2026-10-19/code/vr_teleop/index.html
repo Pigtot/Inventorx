@@ -34,7 +34,8 @@ Hold the <b>right grip</b> and the arm follows your hand. Let go and it stops.
 Small hand moves are fine and precise; reaching farther moves the arm much more.<br>
 <b>Twist your hand</b> while holding the grip: the gripper turns the same amount (it stays pointing down).<br>
 <b>Left trigger</b> click: close the gripper on a block; click again to open it.<br>
-Press <b>B</b> to turn the camera picture a quarter turn (it's remembered).</p>
+Press <b>B</b> to turn the camera picture a quarter turn (it's remembered).<br>
+<b>Controller buzz:</b> a long, strong buzz in both hands = the arm stopped on its own, so look at it. 2 quick ticks = "not now" (motion is OFF, or let go of the grip before pressing A).</p>
 <p><button id="vr" disabled>Checking for VR...</button></p>
 <p id="msg"></p>
 <h2>Live views</h2>
@@ -273,6 +274,8 @@ vrBtn.onclick = async () => {
   let lastSim = 0, hasSim = false;
   let sending = false, lastSent = 0, hasPicture = false, shownHud = 0, bWasDown = false;
   let leftSource = null, rightSource = null, lastBuzz = 0, lastHum = 0, wasHolding = false, wasArmed = false;
+  let alarmed = false, quietUntil = 0, gripWasDown = false, secondTickAt = 0;
+  const buzzCheck = {};   // per hand: can this browser buzz that controller? (shown on the PC page)
   let lastHudDraw = 0;
   inVR = true;
   let clicks = 0, triggerWasDown = false;   // left trigger clicks; the PC flips the gripper on each new one
@@ -281,9 +284,14 @@ vrBtn.onclick = async () => {
 
   session.requestAnimationFrame(function onFrame(time, frame) {
     session.requestAnimationFrame(onFrame);   // ask for the next frame (72-90 per second)
-    let grip = false, pos = null, yaw = null;
+    let grip = false, pos = null, yaw = null, pressedA = false;
     for (const source of session.inputSources) {
       if (!source.gamepad) continue;
+      if (!(source.handedness in buzzCheck)) {   // a controller just showed up: buzz it once, so you can feel it works
+        const motor = source.gamepad.hapticActuators?.length || source.gamepad.vibrationActuator;
+        buzzCheck[source.handedness] = motor ? "available" : "NOT available in this browser";
+        buzz(source, 0.5, 150);
+      }
       if (source.handedness === "left") {
         leftSource = source;
         const trigger = source.gamepad.buttons[0]?.pressed ?? false;   // button 0 = the trigger
@@ -302,12 +310,19 @@ vrBtn.onclick = async () => {
         grip = source.gamepad.buttons[1].pressed;   // button 1 = the grip (squeeze) button
       }
       const aDown = source.gamepad.buttons[4]?.pressed ?? false;   // button 4 = A
-      if (aDown && !aWasDown) armClicks++;
+      if (aDown && !aWasDown) { armClicks++; pressedA = true; }
       aWasDown = aDown;
       const bDown = source.gamepad.buttons[5]?.pressed ?? false;   // button 5 = B
       if (bDown && !bWasDown) save("turns", (turns = (turns + 1) % 4));   // count one turn per press, not per frame
       bWasDown = bDown;
     }
+    // "Not now" (2 quick ticks): the grip does nothing while motion is OFF, and A only arms after you let go.
+    if (grip && !info.motion && (!gripWasDown || pressedA)) {
+      buzz(rightSource, 0.5, 40);
+      secondTickAt = time + 120;   // played by this loop, not setTimeout: Chrome slows timers while in VR
+    }
+    gripWasDown = grip;
+    if (secondTickAt && time >= secondTickAt) { secondTickAt = 0; buzz(rightSource, 0.5, 40); }
     const layer = session.renderState.baseLayer;
     gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
     gl.clearColor(0.05, 0.06, 0.08, seeThrough ? 0 : 1);   // see-through: clear = show the real room
@@ -323,8 +338,18 @@ vrBtn.onclick = async () => {
       hasPicture = true;
       shownHud = hudVersion;
     }
+    // Alarm = one long, strong buzz in BOTH hands: the arm stopped on its own (PC link lost, program stopped,
+    // or tracking lost while motion was armed). Let go and look at the arm.
+    const fault = !pcOk || info.status === "stopped" || (info.status === "tracking glitch" && wasArmed);
+    if (fault && !alarmed) {
+      buzz(leftSource, 1.0, 600);
+      buzz(rightSource, 1.0, 600);
+      quietUntil = time + 600;    // a new buzz would cut it short, so the force feedback below waits
+      wasArmed = !!info.motion;   // the alarm already says motion stopped: skip the disarm tick
+    }
+    alarmed = fault;
     // Force feedback: shake the controllers about 10 times a second.
-    if (time - lastBuzz > 100) {
+    if (time - lastBuzz > 100 && time > quietUntil) {
       lastBuzz = time;
       const following = info.status === "following";
       let push = 0;
@@ -384,7 +409,8 @@ vrBtn.onclick = async () => {
     }
   });
   const showStats = setInterval(() => {
-    document.getElementById("stats").textContent = `${statsText}\nCamera into VR: ${cam.count} pictures/s`;
+    document.getElementById("stats").textContent = `${statsText}\nCamera into VR: ${cam.count} pictures/s` +
+      `\nController buzz: left ${buzzCheck.left ?? "not seen yet"} · right ${buzzCheck.right ?? "not seen yet"}`;
     cam.count = 0;
   }, 1000);
   session.onend = () => {

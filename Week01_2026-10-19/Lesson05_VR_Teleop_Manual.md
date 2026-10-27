@@ -7,6 +7,8 @@ This manual is how we run it: you wear the Quest Pro, hold the **right grip**, a
 
 **Safety update (2026-10-26):** the audit fixes use a separate connection to send stop commands if the main program gets stuck. Setup checks the controller's replies and reads back the fence and speed cap before enabling motion. Tracking loss now requires a release and a fresh A press. A stop-timer fault, pause, arm error, or mode change ends the session: check the cause and restart. These changes have fake-hardware regression tests; **not tested yet on the real arm**.
 
+**Controller buzz update (2026-10-26):** three new buzzes in E3: a buzz when VR starts (to check vibration works), an alarm when the arm stops on its own, and a "not now" double tick. Tested with fake controllers on the Mac in a dry run; **not tested yet in the headset**.
+
 **Earlier:** the first version moved the real arm with the headset. During that test the arm reported an error, which switched it out of teleop mode. After that, the moves piled up in a queue, so **the arm lagged and kept moving after we let go**. Version 2 fixes this: it stops the instant you let go and quits on any arm error. Version 2 passed fake-hand tests on the PC; **not tested yet** on the real arm.
 This replaces the Wi-Fi plan in Lesson 2 (Parts B and E): school Wi-Fi doesn't work for this, so **everything is connected by cable.**
 
@@ -82,7 +84,8 @@ cd "Week01_2026-10-19\code\vr_teleop"
 5. **Face the same way as the arm's front.** Your "forward" becomes the arm's forward.
 6. Click **2. Enter VR**. With the headset on you can't click, so a partner clicks, or you click and then put the headset on.
 7. The camera picture floats about 1 m in front of you. The **3D twin** of the arm floats to its right: the official xArm 6 CAD model, posed live from the real joint angles. A blue dot shows where the arm is heading while you hold the grip. The PC page shows the same twin next to the D435 view.
-8. **Release the right grip**, then press **A** to arm motion. After a tracking fault, release first, then make a new A press.
+8. You should feel a short buzz in each hand. Spotter: the PC page's last line should say **Controller buzz: left available · right available**. If it says **NOT available**, or the operator feels nothing, the buzzes in E3 won't work in this browser. Everything else still works.
+9. **Release the right grip**, then press **A** to arm motion. After a tracking fault, release first, then make a new A press.
 
 ### E. Controls
 
@@ -142,6 +145,11 @@ The arm has no force sensor, so the controllers *simulate* force from what the p
 | Strong "clunk" | left | The gripper just closed on something. |
 | Light hum every ~0.4 s | left | The gripper is holding something. |
 | Short tick | left / right | Gripper click registered / motion armed or disarmed. |
+| **Long, strong buzz** | both | **The arm stopped on its own:** tracking was lost while motion was armed, the PC link was lost, or the program stopped. Let go and look at the arm and the panel. |
+| 2 quick ticks | right | "Not now": you gripped while motion is OFF (press A first), or pressed A while still gripping (let go first). |
+| Short buzz when VR starts | both | Vibration check (step D8). |
+
+Vibration depends on the browser. The Quest Browser supports it ([Meta's docs](https://developers.meta.com/horizon/documentation/web/webxr-pro-controller)). We don't know yet whether Chrome on the PC passes it through Link, and step D8 checks that.
 
 ### F. Recording (optional)
 **Record the D435 live view (easiest):** the PC page shows the camera live under **"D435 live view"**. It uses the same turn as in VR, with a strip of status, X/Y/Z, gripper state, and the time.
