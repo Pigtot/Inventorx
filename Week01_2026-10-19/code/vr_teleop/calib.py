@@ -17,6 +17,10 @@ import math
 
 import numpy as np
 
+MIN_POINTS = 4
+MIN_SPREAD_MM = 5.0   # a repeated point or an almost straight line cannot determine rotation reliably
+MAX_RMS_MM = 5.0
+
 
 def pose_matrix(x, y, z, roll, pitch, yaw):
     """The arm's tool pose (mm, degrees) as a 4x4 matrix: tool coordinates -> base coordinates.
@@ -56,9 +60,18 @@ def depth_at(depth, u, v, r=3):
 
 def solve(pairs):
     """Kabsch method: the rotation R and shift t that best fit tool = R @ cam + t for all (cam, tool) pairs.
-    Returns T_tool_cam (4x4) and the leftover error (RMS, mm). Needs at least 3 pairs that aren't in a line."""
+    Returns T_tool_cam (4x4) and the leftover error (RMS, mm). Rejects poor or degenerate samples."""
+    if len(pairs) < MIN_POINTS:
+        raise ValueError(f"Need at least {MIN_POINTS} points from different arm poses (have {len(pairs)}).")
     C = np.array([c for c, _ in pairs], dtype=float)
     P = np.array([t for _, t in pairs], dtype=float)
+    if C.shape != (len(pairs), 3) or P.shape != C.shape or not np.isfinite([C, P]).all():
+        raise ValueError("Every point must contain three finite coordinates.")
+    for points in (C, P):
+        # Two independent directions are enough; a planar set is valid.
+        spread = np.linalg.svd(points - points.mean(axis=0), compute_uv=False) / math.sqrt(len(pairs))
+        if spread[1] < MIN_SPREAD_MM:
+            raise ValueError("Points are too close together or nearly in a line. Move sideways as well as up.")
     c0, p0 = C.mean(axis=0), P.mean(axis=0)
     U, _, Vt = np.linalg.svd((C - c0).T @ (P - p0))
     D = np.diag([1, 1, np.sign(np.linalg.det(Vt.T @ U.T))])   # rules out a mirror-image answer
@@ -67,6 +80,8 @@ def solve(pairs):
     T = np.eye(4)
     T[:3, :3], T[:3, 3] = R, t
     rms = float(np.sqrt(np.mean(np.sum((C @ R.T + t - P) ** 2, axis=1))))
+    if not math.isfinite(rms) or rms > MAX_RMS_MM:
+        raise ValueError(f"Fit error {rms:.1f} mm exceeds {MAX_RMS_MM:g} mm. Start over and collect better points.")
     return T, rms
 
 
@@ -104,5 +119,7 @@ def load(path):
 
 def save(path, T, rms, count):
     info = {"T_tool_cam": T.round(4).tolist(), "rms_mm": round(rms, 2), "points": count}
-    path.write_text(json.dumps(info, indent=2))
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(info, indent=2, allow_nan=False))
+    temporary.replace(path)   # keep the previous calibration intact if writing fails
     return info

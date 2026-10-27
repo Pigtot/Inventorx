@@ -9,7 +9,7 @@ const HUD = {
 };
 const HUD_TITLES = {
   following: "TRACKING HAND", "let go": "HOLDING POSITION", "waiting for headset": "AWAITING HEADSET",
-  "tracking glitch": "TRACKING GLITCH", "motion off": "MOTION SAFE · PRESS A",
+  "tracking glitch": "TRACKING LOST · RELEASE, THEN A", "motion off": "MOTION SAFE · RELEASE, THEN A",
 };
 
 // The picture is turned by `turns` quarter turns (clockwise) and scaled by s to fill the canvas.

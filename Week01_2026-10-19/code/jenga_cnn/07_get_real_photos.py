@@ -4,6 +4,8 @@
 Openverse (openverse.org) searches millions of Creative Commons photos, mostly from Flickr.
 We skip "ND" (no-derivatives) licenses, because cropping and drawing on a photo changes it.
 Every photo's creator and license go into credits.csv.
+Reruns keep existing credits and photo numbers. Labeled crops use the permanent
+source URL; a photo's position in search results cannot change its labels.
 
 It also makes numbered "contact sheets" (grids of small pictures) so a person can
 pick the photos that show a clear single block. Picks and crops go in real_crops.csv.
@@ -47,18 +49,45 @@ def search():
     return list(found.values())
 
 
-def make_sheets(names):
+def update_credits(path, saved):
+    """Keep old entries (including photos missing from today's search); append new numbers."""
+    old = []
+    if path.exists():
+        with open(path, newline="", encoding="utf-8") as f:
+            old = list(csv.DictReader(f))
+    rows = {r["file"]: r for r in old}
+    next_number = max((int(r["number"]) for r in old), default=-1) + 1
+    for name, r in sorted(saved):
+        number = rows[name]["number"] if name in rows else next_number
+        if name not in rows:
+            next_number += 1
+        rows[name] = dict(number=number, file=name, title=r["title"], creator=r.get("creator"),
+                          license=f"CC {r['license'].upper()} {r.get('license_version') or ''}".strip(),
+                          source=r.get("foreign_landing_url"))
+    ordered = sorted(rows.values(), key=lambda r: int(r["number"]))
+    temporary = path.with_suffix(".tmp")
+    with open(temporary, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["number", "file", "title", "creator", "license", "source"])
+        writer.writeheader()
+        writer.writerows(ordered)
+    temporary.replace(path)
+    return ordered
+
+
+def make_sheets(rows):
     """Grids of 30 numbered pictures, so we can pick the useful ones by eye."""
     (OUT / "sheets").mkdir(exist_ok=True)
     tiles = []
-    for i, name in enumerate(names):
-        img = cv2.imread(str(OUT / "photos" / name))
+    for row in rows:
+        img = cv2.imread(str(OUT / "photos" / row["file"]))
+        if img is None:
+            continue
         h, w = img.shape[:2]
         s = 200 / max(h, w)
         tile = np.full((220, 200, 3), 255, np.uint8)
         small = cv2.resize(img, (int(w * s), int(h * s)))
         tile[:small.shape[0], :small.shape[1]] = small
-        cv2.putText(tile, str(i), (4, 216), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+        cv2.putText(tile, str(row["number"]), (4, 216), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
         tiles.append(tile)
     for start in range(0, len(tiles), 30):
         group = tiles[start:start + 30]
@@ -86,14 +115,8 @@ def main():
             cv2.imwrite(str(path), cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_AREA))
         saved.append((name, r))
 
-    saved.sort()
-    with open(OUT / "credits.csv", "w", newline="") as f:
-        out = csv.writer(f)
-        out.writerow(["number", "file", "title", "creator", "license", "source"])
-        for i, (name, r) in enumerate(saved):
-            out.writerow([i, name, r["title"], r.get("creator"), f"CC {r['license'].upper()} {r.get('license_version') or ''}".strip(),
-                          r.get("foreign_landing_url")])
-    make_sheets([name for name, _ in saved])
+    rows = update_credits(OUT / "credits.csv", saved)
+    make_sheets(rows)
     print(f"Saved {len(saved)} photos in {OUT / 'photos'} and contact sheets in {OUT / 'sheets'}")
 
 

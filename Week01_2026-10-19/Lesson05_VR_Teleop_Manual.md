@@ -5,10 +5,12 @@ This manual is how we run it: you wear the Quest Pro, hold the **right grip**, a
 
 **Status (2026-10-25, later):** version 4 drove the real arm smoothly, including turning the gripper with a hand twist, with no errors. Version 5 also works on the real arm: the A button arms and disarms motion, and the 3D twin follows the arm. The HUD (E2), force feedback (E3), and camera calibration (H) were added after the last session: **not tested yet** on the real arm.
 
+**Safety update (2026-10-26):** the audit fixes use a separate connection to send stop commands if the main program gets stuck. Setup checks the controller's replies and reads back the fence and speed cap before enabling motion. Tracking loss now requires a release and a fresh A press. A stop-timer fault, pause, arm error, or mode change ends the session: check the cause and restart. These changes have fake-hardware regression tests; **not tested yet on the real arm**.
+
 **Earlier:** the first version moved the real arm with the headset. During that test the arm reported an error, which switched it out of teleop mode. After that, the moves piled up in a queue, so **the arm lagged and kept moving after we let go**. Version 2 fixes this: it stops the instant you let go and quits on any arm error. Version 2 passed fake-hand tests on the PC; **not tested yet** on the real arm.
 This replaces the Wi-Fi plan in Lesson 2 (Parts B and E): school Wi-Fi doesn't work for this, so **everything is connected by cable.**
 
-Code: [`code/vr_teleop/`](code/vr_teleop/): `vr_teleop.py` (the program), `index.html` (the VR page), `sim.js` (the 3D twin), `hud.js` (the HUD), `calib.py` (the camera calibration math), `meshes/` (UFACTORY's official xArm 6 and gripper CAD parts, from the `xArm-Developer/xarm_ros2` GitHub repository), and `lib/` (three.js 0.160.0, the 3D library).
+Code: [`code/vr_teleop/`](code/vr_teleop/): `vr_teleop.py` (the program), `safety.py` (hand checks and the independent stop timer), `index.html` (the VR page), `sim.js` (the 3D twin), `hud.js` (the HUD), `calib.py` (the camera calibration math), `meshes/` (UFACTORY's official xArm 6 and gripper CAD parts, from the `xArm-Developer/xarm_ros2` GitHub repository), and `lib/` (three.js 0.160.0, the 3D library).
 
 ---
 
@@ -80,15 +82,15 @@ cd "Week01_2026-10-19\code\vr_teleop"
 5. **Face the same way as the arm's front.** Your "forward" becomes the arm's forward.
 6. Click **2. Enter VR**. With the headset on you can't click, so a partner clicks, or you click and then put the headset on.
 7. The camera picture floats about 1 m in front of you. The **3D twin** of the arm floats to its right: the official xArm 6 CAD model, posed live from the real joint angles. A blue dot shows where the arm is heading while you hold the grip. The PC page shows the same twin next to the D435 view.
-8. Press **A** to arm motion.
+8. **Release the right grip**, then press **A** to arm motion. After a tracking fault, release first, then make a new A press.
 
 ### E. Controls
 
 | Do this | What happens |
 |---|---|
-| **Press A** | Arm or disarm motion. **It starts disarmed.** While disarmed, the grip, twist, and gripper do nothing, so you can rest or move freely. If the headset or page loses contact, it disarms itself. |
+| **Press A** | Arm or disarm motion. **It starts disarmed.** Release the right grip before arming. While disarmed, the grip, twist, and gripper do nothing. Tracking loss disarms motion; release, then press A again. A live stop-timer fault requires a program restart. |
 | **Hold the right grip** | The arm's tool follows your hand's movement (position only; the tool keeps pointing down). |
-| **Let go of the grip** | The arm **stops right where it is** (within about 20 ms). Your hand can move freely, like lifting a computer mouse to reposition it. |
+| **Let go of the grip** | The program sends a stop and leaves the arm stopped until a fresh grip. Your hand can move freely, like lifting a computer mouse to reposition it. The old version's measured stop time was about 20 ms; the updated version's physical stop time is **not tested yet**. |
 | **Twist your hand** (while holding the grip) | The gripper turns the same amount around the vertical axis (1:1). It always stays pointing straight down. Limit: ±170°. |
 | **Left trigger click** | Close the gripper on a block. Click again to open it. |
 | **Press B** | Turn the camera picture a quarter turn. Turn it until the arm's front is at the top. It's remembered. |
@@ -158,7 +160,7 @@ The arm has no force sensor, so the controllers *simulate* force from what the p
 
 ### G. Shut down
 1. Let go of the grip.
-2. In the PowerShell window press **Ctrl + C**. The program puts the arm's safety settings back the way it found them, and the arm holds still. (The gripper stays as it is, so it won't drop a block.)
+2. In the PowerShell window press **Ctrl + C**. The program sends a stop before closing the web server, then restores the arm's safety settings. The arm stays in the stopped state. (The gripper stays as it is, so it won't drop a block.)
 3. Take off the headset.
 
 ### H. Camera calibration (do once; redo if the camera mount moves)
@@ -177,7 +179,7 @@ On made-up test data with realistic errors, this found the camera's position wit
 2. Operator: drive the gripper tip down until it **just touches** the dot. Spotter: click **Record touch**.
 3. Operator: lift up and let go. Spotter: **click the dot** in the HUD picture on the PC page.
 4. Repeat step 3 from at least 4 different spots. Change the **height** (about 100–300 mm above the table) and the **turn** each time.
-5. Spotter: click **Solve**. A fit error **under 5 mm** is good. If it's higher, click **Start over** and click more carefully.
+5. Spotter: click **Solve**. The program accepts at least 4 points with enough spread in two directions and a fit error of at most 5 mm. Repeated, nearly straight-line, invalid, or poor-fitting samples are rejected; the previous saved calibration is kept. If rejected, click **Start over**, move sideways as well as up, and click more carefully. Fit error is a check on these samples, not a guarantee of real-world accuracy.
 
 ---
 
@@ -197,10 +199,11 @@ The safe workspace for the tool tip is in the arm's coordinates: X = forward, Y 
 | **The arm's own fence** | x 50 to 650, y ±650, z −105 to 520 mm. The arm's controller stops it if the tool leaves this box, even if our code has a bug. | `FENCE` |
 | **The arm's own speed cap** | 250 mm/s while teleop runs | `ARM_MAX_SPEED` |
 | Motion switch (A) | starts OFF; nothing moves until the operator presses A; lost contact turns it OFF | `motion_on` |
-| Let go = stop | stops at once and throws away the rest of the move | `stop_here()` |
-| Dead-man switch | no message for 0.3 s = let go | the `age > 0.3` line |
-| Tracking glitch | a hand "jump" of more than 25 cm between messages is ignored | the `0.25` line |
-| Arm error or wrong mode | the program stops and quits, so moves can never pile up | top of the main loop |
+| Let go = stop | sends a stop; a fresh grip is needed to become ready again | `ArmWatchdog.stop()` in `safety.py` |
+| Dead-man switch | no hand message or no control-loop progress for 0.3 s while moving: a separate connection sends a stop; restart required | `ArmWatchdog` in `safety.py` |
+| Tracking glitch | a hand jump over 25 cm or a missing/invalid pose disarms motion; release, then press A again | `HandInput` in `safety.py` |
+| Arm error, pause, or wrong mode | checked by the watchdog and before every movement command; the session ends | `ArmWatchdog.check()` |
+| Safety setup failure | nonzero SDK replies or mismatched fence/speed readback abort startup | `connect_arm()` |
 | Collision detection | the arm's own setting (ours is sensitivity 3); the program warns if it's off | UFactory Studio |
 | Who can send hand moves | only this PC (`127.0.0.1`) | no change needed |
 | Copies running at once | one. A second copy says "Port 8000 is busy" and quits. | no change needed |
@@ -226,6 +229,8 @@ The safe workspace for the tool tip is in the arm's coordinates: X = forward, Y 
 | Panel says "PC program not responding" | The PowerShell program stopped or crashed. Check its window. |
 | Panel says "Following" but the arm doesn't move | Is it a dry run (no `--live`)? Did the spotter press Enter at the safety question? Look for an error code in the window. |
 | "The arm reported error ..." and the program quit | Look the error up in UFactory Studio and clear it there. Then restart the program. |
+| "Stop timer expired", "Control loop stalled", or "Hand command expired" | Keep the grip released. Check the headset link and the Python window, then restart the program. A fresh A press does not clear a watchdog fault. |
+| "Tracking glitch" but the program is still running | Wait for good tracking. Release the grip, then press A again before gripping. |
 | The arm keeps moving after you let go | It shouldn't in version 2. **Press the E-stop**, then tell us what the window says. |
 | "The tool is outside the safe workspace" | Move the arm inside it (section B) with teach mode, then restart. |
 | Picture sideways or upside down | Press **B** until the arm's front is at the top. |
@@ -236,7 +241,7 @@ The safe workspace for the tool tip is in the arm's coordinates: X = forward, Y 
 ## How it works (short version)
 1. **Reading your hand:** the VR page uses **WebXR**, the browser feature for VR. Every frame it reads the right controller's position and whether the grip is pressed.
 2. **Talking to the PC:** about 30 times a second, the page sends that to `vr_teleop.py`, which runs a tiny web server on the same PC.
-3. **Moving the arm:** when you press the grip, the program remembers where your hand and the tool are. After that, it takes your hand's movement, converts it to the arm's directions and to millimeters, and bends it with the curve. It adds that to the tool's start spot and pulls the result back inside the safe workspace. It sends the target with the arm's **mode 7** (online planning), where each new target smoothly replaces the last one. In any other mode, moves would pile up in a queue. That's the lag we saw, so the program refuses to run in any other mode.
+3. **Moving the arm:** when you press the grip, the program remembers where your hand and the tool are. After that, it takes your hand's movement, converts it to the arm's directions and to millimeters, and bends it with the curve. It adds that to the tool's start spot and pulls the result back inside all the workspace limits together. It checks **mode 7** before every command and rejects a command if the hand changes while an SDK call is running. A separate thread and connection can send a stop even while the main SDK connection is waiting for a reply. The SDK's automatic pause and queue waits are disabled. Stop commands still depend on the PC, network, and controller working; the spotter's physical E-stop remains necessary.
 4. **Camera:** the program keeps only the newest D435 picture. The page asks for the next one only after it gets the last one, so lag never piles up. Pictures stay uncompressed, because everything is on one PC.
 
 ## Check yourself
