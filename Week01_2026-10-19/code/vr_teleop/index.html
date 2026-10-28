@@ -192,16 +192,20 @@ setInterval(() => {
 }, 200);
 
 // ---- VR. Plain VR only: Link never gives a PC page the headset's see-through cameras, so we don't ask. ----
+const onMac = /Mac/.test(navigator.platform);
+const headsetHint = onMac
+  ? "On Mac, open this page inside Quest Browser after setting up the USB connection. The Mac page shows the camera; the headset sends controller input."
+  : "Open this page in Quest Browser, or use Chrome on a Windows PC with Quest Link connected.";
 if (!navigator.xr) {
   vrBtn.textContent = "VR not available";
-  msg.textContent = "Open this page in Chrome.";
+  msg.textContent = headsetHint;
 }
 (async () => {
   if (!navigator.xr) return;
   const ok = await navigator.xr.isSessionSupported("immersive-vr").catch(() => false);
   vrBtn.disabled = !ok;
   vrBtn.textContent = ok ? "Enter VR" : "No headset";
-  if (!ok) msg.textContent = "Turn on Link in the headset, then reload.";
+  if (!ok) msg.textContent = headsetHint;
 })();
 
 // ---- Debug timing (temporary): each VR start-up step and any stall, saved by the PC in vr_debug.log. ----
@@ -278,6 +282,7 @@ vrBtn.onclick = async () => {
     let leftSource = null, rightSource = null, lastBuzz = 0, lastHum = 0, wasHolding = false, wasArmed = false;
     let alarmed = false, quietUntil = 0, gripWasDown = false, secondTickAt = 0;
     const buzzCheck = {};   // per hand: can this browser buzz that controller? (shown on the PC page)
+    const controllerTracking = { left: false, right: false };
     let lastHudDraw = 0, frames = 0, frameWork = 0;
     inVR = true;
     let clicks = 0, triggerWasDown = false;   // left trigger clicks; the PC flips the gripper on each new one
@@ -372,6 +377,8 @@ vrBtn.onclick = async () => {
         if (!!info.motion !== wasArmed) { wasArmed = !!info.motion; buzz(rightSource, 0.4, 60); }   // tick when A arms/disarms
       }
       vr.update(info, poses, grip);
+      controllerTracking.left = !!poses.left;
+      controllerTracking.right = !!poses.right;
       renderer.render(vr.scene, eyes);
       // Send the hand to the PC about 30 times a second; its answer is the live coordinates.
       if (!sending && time - lastSent > 33) {
@@ -391,16 +398,17 @@ vrBtn.onclick = async () => {
     showStats = setInterval(() => {
       document.getElementById("stats").textContent =
         `VR ${frames} fps · ${(frameWork / Math.max(frames, 1)).toFixed(1)} ms/frame · Camera ${cam.count} fps · ` +
+        `Controllers L ${controllerTracking.left ? "tracked" : "missing"} R ${controllerTracking.right ? "tracked" : "missing"} · ` +
         `Buzz L ${buzzCheck.left ?? "–"} R ${buzzCheck.right ?? "–"}`;
       dbg(document.getElementById("stats").textContent);
       cam.count = frames = frameWork = 0;
       if (!lastFrameAt && performance.now() - setupDone > 5000) {
-        msg.textContent = `No VR frames yet (${session.visibilityState}). Keep the headset on, close the Link menu, or test /vr_check.html.`;
+        msg.textContent = `No VR frames yet (${session.visibilityState}). Keep the headset on, close the headset menu, or test /vr_check.html.`;
       }
     }, 1000);
   } catch (e) {
     dbg(`VR startup failed after ${since(t)}: ${e}`);
-    msg.textContent = `Couldn't start VR: ${e.name}: ${e.message}. Check Quest Link, then try again.`;
+    msg.textContent = `Couldn't start VR: ${e.name}: ${e.message}. Check the headset connection, then try again.`;
     if (session && !ended) {
       try { await session.end(); }
       catch (endError) {

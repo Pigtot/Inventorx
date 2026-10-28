@@ -980,3 +980,15 @@ lurred
 12:51:34.257  1660.18 s  VR 660 fps · 0.7 ms/frame · Camera 300 fps · Buzz L unavailable R unavailable
 12:52:34.255  1720.19 s  VR 3975 fps · 0.7 ms/frame · Camera 1799 fps · Buzz L unavailable R unavailable
 12:53:34.245  1780.19 s  VR 3977 fps · 0.7 ms/frame · Camera 1799 fps · Buzz L unavailable R unavailable
+13:02:30.601  slow step: whole loop took 121 ms
+13:04:56.099  slow step: whole loop took 624 ms
+13:04:56.274  slow step: whole loop took 143 ms
+13:05:49.127  slow step: whole loop took 615 ms
+13:05:49.429  slow step: whole loop took 134 ms
+13:05:49.481  slow step: whole loop took 151 ms
+13:16:10.060  slow step: whole loop took 620 ms
+13:16:10.214  slow step: whole loop took 132 ms
+14:42:15.518  0.21 s  page loaded
+14:42:15.529  0.22 s  VR graphics: WebGL 1 (classic XRWebGLLayer)
+14:47:41.025  0.10 s  page loaded
+14:47:41.032  0.11 s  VR graphics: WebGL 1 (classic XRWebGLLayer)

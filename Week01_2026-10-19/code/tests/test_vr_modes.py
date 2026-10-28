@@ -38,6 +38,9 @@ class ModeTests(unittest.TestCase):
     def test_no_flags_keeps_dry_run(self):
         self.assertFalse(settings()['MOVE_ARM'])
 
+    def test_camera_authorization_keeps_dry_run(self):
+        self.assertFalse(settings('--camera-admin')['MOVE_ARM'])
+
 
 if __name__ == '__main__':
     unittest.main()

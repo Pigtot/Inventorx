@@ -8,7 +8,7 @@ We also use an Intel RealSense D435 depth camera and a Meta Quest Pro VR headset
 | Week | Dates | What we did |
 |---|---|---|
 | [Week 1](Week01_2026-10-19/week_summary.md) | Oct 19 – 25, 2026 | Connected the arm and camera to the PC, controlled the arm with the VR headset, and trained a program to find Jenga blocks in pictures. |
-| [Week 2](Week02_2026-10-26/week_summary.md) | Oct 26 – Nov 1, 2026 | Put a 3D model of the arm into VR, and fixed the headset freezing when VR starts. |
+| [Week 2](Week02_2026-10-26/week_summary.md) | Oct 26 – Nov 1, 2026 | Fixed VR startup on the PC; got Mac color/depth capture working at 15 fps. Mac controller setup is paused at Meta sign-in; resume steps saved. |
 
 ## Where things are
 
