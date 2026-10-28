@@ -25,7 +25,7 @@ CODE = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(CODE / 'vr_teleop'), str(CODE / 'jenga_cnn')]
 import calib
 from real_photos import load_crops
-from safety import ArmWatchdog, HandInput, SafetyError
+from safety import ArmError, ArmWatchdog, HandInput, SafetyError, Stalled
 
 
 def load(name, path):
@@ -64,6 +64,7 @@ class Controller:
         self.settings = [0, [1000, -1000, 1000, -1000, 1000, -1000], 1000., 180., [], 0, 0]
         self.calls = []
         self.fail = None
+        self.fail_code = -3   # what the failing call returns; 1 = "the arm has an error"
         self.mismatch = False
         self.stopped = threading.Event()
         self.instances = []
@@ -92,7 +93,7 @@ class FakeAPI:
     def position(self): return self.c.position
     def record(self, name, *args):
         self.c.calls.append((name, args))
-        return -3 if self.c.fail == name else 0
+        return self.c.fail_code if self.c.fail == name else 0
     def set_timeout(self, seconds): self.record('set_timeout', seconds)
     def set_state(self, state):
         with self.connection_lock:
@@ -128,7 +129,12 @@ class FakeAPI:
         code = self.record('set_fence_mode', enabled)
         if not code: self.c.settings[5] = int(enabled)
         return [code]   # like the real SDK 1.18.4, which returns a list here
-    def clean_error(self): return self.record('clean_error')
+    def clean_error(self):
+        code = self.record('clean_error')
+        if not code:
+            self.c.error_code = 0
+            if self.c.fail_code == 1: self.c.fail = None   # that call only failed because of the arm error
+        return code
     def motion_enable(self, enabled): return self.record('motion_enable', enabled)
     def set_gripper_mode(self, mode): return self.record('set_gripper_mode', mode)
     def set_gripper_enable(self, enabled): return self.record('set_gripper_enable', enabled)
@@ -293,6 +299,62 @@ class WatchdogTests(unittest.TestCase):
         with self.assertRaises(SafetyError): self.guard.command(self.epoch, 'Delayed call', delayed)
 
 
+class RecoveryTests(unittest.TestCase):
+    """A stall or the arm's own error stops the arm without ending the session."""
+    def setUp(self):
+        self.clock = Clock()
+        self.hands = HandInput(self.clock)
+        self.epoch = arm_hands(self.hands)
+        self.c = Controller()
+        self.arm, self.stop_arm = self.c.factory('fake'), self.c.factory('fake')
+        self.guard = ArmWatchdog(self.arm, self.stop_arm, self.hands, self.clock)
+    def slow_reply(self, seconds, still_holding=False):
+        def reply():
+            steps = round(seconds / 0.1) if still_holding else 1
+            for _ in range(steps):
+                self.clock.now += seconds / steps
+                if still_holding: self.hands.update(message(True, 1))   # the headset keeps sending meanwhile
+                self.guard.poll()   # the watchdog gets a turn while the reply is late
+            return 0
+        return reply
+    def test_first_move_may_reply_slowly(self):
+        self.hands.update(message(True, 1))
+        self.guard.command(self.hands.snapshot()['epoch'], 'First move', self.slow_reply(0.5, True), allow=1.0)
+        self.guard.poll()
+        self.assertIsNone(self.guard.fault)
+    def test_slow_move_stops_then_needs_release_and_a(self):
+        with self.assertRaises(Stalled): self.guard.command(self.epoch, 'Move', self.slow_reply(0.31))
+        self.assertEqual(self.c.state, 4)
+        self.guard.recover()
+        self.assertIsNone(self.guard.fault)
+        self.hands.update(message(True, 1))
+        self.assertFalse(self.hands.snapshot()['motion'])   # still holding the grip: let go first
+        self.hands.update(message(clicks=1))
+        self.assertFalse(self.hands.snapshot()['motion'])
+        self.hands.update(message(clicks=2))
+        self.assertTrue(self.hands.snapshot()['motion'])
+    def test_arm_error_is_not_a_restart_fault_and_clearing_keeps_it_stopped(self):
+        self.guard.active = True
+        self.c.error_code = 31
+        with self.assertRaises(ArmError): self.guard.permit(self.epoch)
+        self.guard.poll()
+        self.assertIsNone(self.guard.fault)
+        self.assertEqual(self.c.state, 4)
+        self.guard.clear_error()
+        self.assertEqual(self.c.error_code, 0)
+        self.assertEqual(self.c.state, 4)
+        self.assertNotIn(('set_state', (0,)), self.c.calls)
+    def test_restore_clears_an_arm_error_that_blocks_the_settings(self):
+        c = Controller(); old = copy.deepcopy(c.settings)
+        with patch.object(teleop.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()):
+            arm, stop, _ = teleop.connect_arm(c.factory, lambda _: '')
+            c.fail, c.fail_code = 'set_fence_mode', 1
+            teleop.restore(stop, old)
+        self.assertIn(('clean_error', ()), c.calls)
+        self.assertEqual(c.settings, old)
+        self.assertEqual(c.state, 4)
+
+
 class SetupTests(unittest.TestCase):
     def connect(self, controller):
         with patch.object(teleop.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()):
@@ -395,6 +457,29 @@ class MainLoopTests(unittest.TestCase):
         result, c = self.run_loop([message(), message(clicks=1), message(True, 1),
                                    message(clicks=1), message(True, 1)])
         self.assertEqual(result, 0)
+        self.assertEqual(sum((n, args) == ('set_state', (0,)) for n, args in c.calls), 2)
+    def test_stall_stops_then_carries_on_after_release_and_a(self):
+        stalls = []
+        def stall_once(hands):
+            if not stalls:
+                stalls.append(1)
+                teleop.watchdog.progress -= 2   # longer than even the first move may take
+        result, c = self.run_loop([message(), message(clicks=1), message(True, 1), message(True, 1),
+                                   message(clicks=1), message(True, 1), message(clicks=2), message(True, 2)],
+                                  during_move=stall_once)
+        self.assertEqual(result, 0)
+        self.assertEqual(sum((n, args) == ('set_state', (0,)) for n, args in c.calls), 2)
+    def test_arm_error_waits_for_b_hold_then_needs_a(self):
+        c = Controller()
+        def error_once(hands):
+            if not any(n == 'clean_error' for n, _ in c.calls) and not c.error_code:
+                c.error_code = 31
+        result, c = self.run_loop([message(), message(clicks=1), message(True, 1), message(clicks=1),
+                                   dict(message(clicks=1), clears=1), message(clicks=1),
+                                   message(clicks=2), message(True, 2)], controller=c, during_move=error_once)
+        self.assertEqual(result, 0)
+        self.assertEqual(c.error_code, 0)
+        self.assertIn(('clean_error', ()), c.calls)
         self.assertEqual(sum((n, args) == ('set_state', (0,)) for n, args in c.calls), 2)
     def test_release_during_sdk_reply_cancels_without_exiting(self):
         result, c = self.run_loop([message(), message(clicks=1), message(True, 1), message(clicks=1)],

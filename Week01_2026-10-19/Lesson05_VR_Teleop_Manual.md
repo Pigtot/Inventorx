@@ -5,11 +5,15 @@ This manual is how we run it: you wear the Quest Pro, hold the **right grip**, a
 
 **Status (2026-10-25, later):** version 4 drove the real arm smoothly, including turning the gripper with a hand twist, with no errors. Version 5 also works on the real arm: the A button arms and disarms motion, and the 3D twin follows the arm. The HUD (E2), force feedback (E3), and camera calibration (H) were added after the last session: **not tested yet** on the real arm.
 
-**Safety update (2026-10-26):** the audit fixes use a separate connection to send stop commands if the main program gets stuck. Setup checks the controller's replies and reads back the fence and speed cap before enabling motion. Tracking loss now requires a release and a fresh A press. A stop-timer fault, pause, arm error, or mode change ends the session: check the cause and restart. These changes have fake-hardware regression tests; **not tested yet on the real arm**.
+**Safety update (2026-10-26):** the audit fixes use a separate connection to send stop commands if the main program gets stuck. Setup checks the controller's replies and reads back the fence and speed cap before enabling motion. Tracking loss now requires a release and a fresh A press. A pause, mode change, or lost connection ends the session: check the cause and restart. These changes have fake-hardware regression tests; **not tested yet on the real arm**.
+
+**Update (2026-10-28):** a stall no longer ends the session. The arm still stops; let go, then press A to carry on. An arm error (for example a collision) also keeps the program running: look at the arm, then hold B for 2 s to clear it, then let go and press A. The first move after each fresh grip may take up to 1 s, because the controller answers that one slowly (we measured 359 ms). **Not tested yet on the real arm.**
 
 **Controller buzz update (2026-10-26):** three new buzzes in E3: a buzz when VR starts (to check vibration works), an alarm when the arm stops on its own, and a "not now" double tick. Tested with fake controllers on the Mac in a dry run; **not tested yet in the headset**.
 
 **VR view update (2026-10-26):** the 3D twin is now a real 3D model in VR (not a flat picture), the controllers show as ghosts with a "rubber band" while you drive, **X** switches the camera to a depth view, and the page and HUD were simplified. Tested with a fake headset on the Mac in a dry run; **not tested yet in the headset**. After updating, press **Ctrl + Shift + R** once on the page so Chrome drops its old copies of the files.
+
+**Cable graphics check (2026-10-27):** the user confirmed the updated full view works in the Quest Pro in dry-run mode. The page now uses the same WebGL 1 graphics path as the working blue test, with VR around 60–77 fps and camera around 30 fps. Controller vibration is unavailable in this Chrome/Link session. Start the first live trial with `vr_teleop.py --live --slow`: tool speed and controller cap are 50 mm/s, with 25 mm/s near the floor. Live motion with this update is **not tested yet**. See [`CONNECTION_DEBUG.md`](code/vr_teleop/CONNECTION_DEBUG.md).
 
 **Earlier:** the first version moved the real arm with the headset. During that test the arm reported an error, which switched it out of teleop mode. After that, the moves piled up in a queue, so **the arm lagged and kept moving after we let go**. Version 2 fixes this: it stops the instant you let go and quits on any arm error. Version 2 passed fake-hand tests on the PC; **not tested yet** on the real arm.
 This replaces the Wi-Fi plan in Lesson 2 (Parts B and E): school Wi-Fi doesn't work for this, so **everything is connected by cable.**
@@ -93,12 +97,13 @@ cd "Week01_2026-10-19\code\vr_teleop"
 
 | Do this | What happens |
 |---|---|
-| **Press A** | Arm or disarm motion. **It starts disarmed.** Release the right grip before arming. While disarmed, the grip, twist, and gripper do nothing. Tracking loss disarms motion; release, then press A again. A live stop-timer fault requires a program restart. |
+| **Press A** | Arm or disarm motion. **It starts disarmed.** Release the right grip before arming. While disarmed, the grip, twist, and gripper do nothing. Tracking loss or a stall disarms motion; release, then press A again. |
 | **Hold the right grip** | The arm's tool follows your hand's movement (position only; the tool keeps pointing down). |
 | **Let go of the grip** | The program sends a stop and leaves the arm stopped until a fresh grip. Your hand can move freely, like lifting a computer mouse to reposition it. The old version's measured stop time was about 20 ms; the updated version's physical stop time is **not tested yet**. |
 | **Twist your hand** (while holding the grip) | The gripper turns the same amount around the vertical axis (1:1). It always stays pointing straight down. Limit: ±170°. |
 | **Left trigger click** | Close the gripper on a block. Click again to open it. |
 | **Press B** | Turn the camera picture a quarter turn. Turn it until the arm's front is at the top. It's remembered. |
+| **Hold B for 2 s** | Only during an arm error: clear it. Look at the arm first. It stays stopped; let go, then press A. |
 | **Press X** | Switch the camera window between the color and depth pictures (also the **Depth view** button on the PC page). |
 | **Hold the Meta button** | Re-center the view in front of you. |
 
@@ -209,7 +214,7 @@ The safe workspace for the tool tip is in the arm's coordinates: X = forward, Y 
 | **The arm's own speed cap** | 250 mm/s while teleop runs | `ARM_MAX_SPEED` |
 | Motion switch (A) | starts OFF; nothing moves until the operator presses A; lost contact turns it OFF | `motion_on` |
 | Let go = stop | sends a stop; a fresh grip is needed to become ready again | `ArmWatchdog.stop()` in `safety.py` |
-| Dead-man switch | no hand message or no control-loop progress for 0.3 s while moving: a separate connection sends a stop; restart required | `ArmWatchdog` in `safety.py` |
+| Dead-man switch | no hand message or no control-loop progress for 0.3 s while moving (1 s for the first move after a fresh grip): a separate connection sends a stop; let go, then press A | `ArmWatchdog` in `safety.py` |
 | Tracking glitch | a hand jump over 25 cm or a missing/invalid pose disarms motion; release, then press A again | `HandInput` in `safety.py` |
 | Arm error, pause, or wrong mode | checked by the watchdog and before every movement command; the session ends | `ArmWatchdog.check()` |
 | Safety setup failure | nonzero SDK replies or mismatched fence/speed readback abort startup | `connect_arm()` |
@@ -239,8 +244,8 @@ The safe workspace for the tool tip is in the arm's coordinates: X = forward, Y 
 | HUD says "PC link lost" | The PowerShell program stopped or crashed. Check its window. |
 | The page looks broken or blank after an update | Press **Ctrl + Shift + R** once, so Chrome loads the new files. |
 | HUD says "Following your hand" but the arm doesn't move | Is it a dry run (no `--live`)? Did the spotter press Enter at the safety question? Look for an error code in the window. |
-| "The arm reported error ..." and the program quit | Look the error up in UFactory Studio and clear it there. Then restart the program. |
-| "Stop timer expired", "Control loop stalled", or "Hand command expired" | Keep the grip released. Check the headset link and the Python window, then restart the program. A fresh A press does not clear a watchdog fault. |
+| "Arm error C..." | The arm stopped itself. Look at it and fix the cause (for example, move a block it hit). Then hold B for 2 s, let go, and press A. If it won't clear, check the E-stop and UFactory Studio. |
+| "Stop timer expired" or "Control loop stalled" | The arm stopped. Let go, then press A to carry on. If it keeps happening, the `slow step:` lines name the slow part. |
 | "Tracking glitch" but the program is still running | Wait for good tracking. Release the grip, then press A again before gripping. |
 | The arm keeps moving after you let go | It shouldn't in version 2. **Press the E-stop**, then tell us what the window says. |
 | "The tool is outside the safe workspace" | Move the arm inside it (section B) with teach mode, then restart. |

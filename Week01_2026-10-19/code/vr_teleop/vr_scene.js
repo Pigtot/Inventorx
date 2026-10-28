@@ -14,7 +14,7 @@ const WINDOW_AT = [0, -0.05, -1.0];     // a little below eye level: easy on the
 // Bigger or closer, it covers the window; lower, it sits behind your right hand.
 const TWIN_AT = [0.7, -0.2, -0.75];     // the twin's base
 const TWIN_SCALE = 0.4;                 // 40% of real size, about 1 m away: looks as tall as a big monitor beside you
-const ROOM = new THREE.Color(0x0d0f14); // the background when there's no see-through
+const ROOM = new THREE.Color(0x0d0f14); // the background all around you
 const CYAN = 0x4fd8ff, AMBER = 0xffb347, WHITE = 0xe9f7ff;   // the HUD's colors
 
 // A w x h rectangle (meters) with round corners of radius r, with the picture spread across it.
@@ -37,6 +37,7 @@ function roundedRect(w, h, r) {
 
 export function makeVRScene(hudCanvas) {
   const scene = new THREE.Scene();
+  scene.background = ROOM;
   addLights(scene);
 
   // Camera window.
@@ -78,7 +79,6 @@ export function makeVRScene(hudCanvas) {
 
   return {
     scene,
-    setSeeThrough(on) { scene.background = on ? null : ROOM; },   // no background = the real room shows
 
     // Call after the HUD canvas is redrawn, so the window shows the new picture.
     hudChanged() {

@@ -70,6 +70,7 @@
       <dt>Open or close</dt><dd><kbd>Left trigger</kbd></dd>
       <dt>Depth view</dt><dd><kbd>X</kbd></dd>
       <dt>Rotate the picture</dt><dd><kbd>B</kbd></dd>
+      <dt>Clear an arm error</dt><dd>Look at the arm, then hold <kbd>B</kbd> for 2 s</dd>
       <dt>Long buzz</dt><dd>The arm stopped on its own. Look at it.</dd>
       <dt>Two ticks</dt><dd>Not now. Motion is off.</dd>
     </dl>
@@ -190,156 +191,226 @@ setInterval(() => {
   fetch("/status").then((res) => res.json()).then(setInfo).catch(() => (pcOk = false));
 }, 200);
 
-// ---- VR (or see-through AR, if this headset link allows it). ----
-let mode = "immersive-vr";
+// ---- VR. Plain VR only: Link never gives a PC page the headset's see-through cameras, so we don't ask. ----
 if (!navigator.xr) {
   vrBtn.textContent = "VR not available";
   msg.textContent = "Open this page in Chrome.";
 }
 (async () => {
   if (!navigator.xr) return;
-  const ar = await navigator.xr.isSessionSupported("immersive-ar").catch(() => false);
-  const vr = await navigator.xr.isSessionSupported("immersive-vr").catch(() => false);
-  mode = ar ? "immersive-ar" : "immersive-vr";
-  vrBtn.disabled = !(ar || vr);
-  vrBtn.textContent = ar || vr ? "Enter VR" : "No headset";
-  if (!(ar || vr)) msg.textContent = "Turn on Link in the headset, then reload.";
+  const ok = await navigator.xr.isSessionSupported("immersive-vr").catch(() => false);
+  vrBtn.disabled = !ok;
+  vrBtn.textContent = ok ? "Enter VR" : "No headset";
+  if (!ok) msg.textContent = "Turn on Link in the headset, then reload.";
 })();
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });   // alpha: see-through can show the room
+// ---- Debug timing (temporary): each VR start-up step and any stall, saved by the PC in vr_debug.log. ----
+function dbg(text) {
+  const line = `${(performance.now() / 1000).toFixed(2)} s  ${text}`;
+  console.log(line);
+  fetch("/log", { method: "POST", body: line }).catch(() => {});
+}
+const since = (t) => `${Math.round(performance.now() - t)} ms`;
+dbg("page loaded");
+window.addEventListener("error", (event) => {
+  dbg(`Page error: ${event.error?.stack || event.message}`);
+  msg.textContent = `Page error: ${event.message}. See vr_debug.log for details.`;
+});
+window.addEventListener("unhandledrejection", (event) => {
+  dbg(`Unhandled error: ${event.reason?.stack || event.reason}`);
+  msg.textContent = `Page error: ${event.reason?.message || event.reason}. See vr_debug.log for details.`;
+});
+
+// Match vr_check.html, which renders on our cable-connected Quest Pro. With three.js r160,
+// WebGL 1 selects XRWebGLLayer instead of the optional WebGL 2 projection-layer path.
+const vrCanvas = document.createElement("canvas");
+const vrContext = vrCanvas.getContext("webgl", { alpha: false, antialias: false });
+if (!vrContext) throw new Error("Could not start VR graphics. Check chrome://gpu.");
+const renderer = new THREE.WebGLRenderer({ canvas: vrCanvas, context: vrContext, alpha: false, antialias: false });
+dbg("VR graphics: WebGL 1 (classic XRWebGLLayer)");
 renderer.xr.enabled = true;
+for (const [name, canvas] of [["VR", renderer.domElement], ["page twin", document.getElementById("simview")]]) {
+  canvas.addEventListener("webglcontextlost", () => dbg(`${name} canvas: WebGL context LOST`));
+  canvas.addEventListener("webglcontextrestored", () => dbg(`${name} canvas: WebGL context restored`));
+}
 renderer.xr.setReferenceSpaceType("local");   // origin = where your head was when VR started
 const vr = makeVRScene(view);                 // vr_scene.js: camera window, 3D twin, controller ghosts
 const eyes = new THREE.PerspectiveCamera(70, 1, 0.05, 20);   // three.js turns this into the headset's two eyes
 
 vrBtn.onclick = async () => {
-  let session;
-  try {
-    session = await navigator.xr.requestSession(mode);
-  } catch {
-    mode = "immersive-vr";   // see-through refused: fall back to plain VR
-    session = await navigator.xr.requestSession(mode);
-  }
-  vr.setSeeThrough(mode === "immersive-ar");
-  await renderer.xr.setSession(session);
-  const space = renderer.xr.getReferenceSpace();
-  let sending = false, lastSent = 0, bWasDown = false, xWasDown = false;
-  let leftSource = null, rightSource = null, lastBuzz = 0, lastHum = 0, wasHolding = false, wasArmed = false;
-  let alarmed = false, quietUntil = 0, gripWasDown = false, secondTickAt = 0;
-  const buzzCheck = {};   // per hand: can this browser buzz that controller? (shown on the PC page)
-  let lastHudDraw = 0, frames = 0, frameWork = 0;
-  inVR = true;
-  let clicks = 0, triggerWasDown = false;   // left trigger clicks; the PC flips the gripper on each new one
-  let armClicks = 0, aWasDown = false;      // A presses; the PC arms/disarms motion on each new one
-
-  renderer.setAnimationLoop((time, frame) => {   // once per headset frame (72-90 per second)
-    if (!frame) return;   // three.js also calls this once outside the headset's frames; skip that call
-    const started = performance.now();
-    let grip = false, pos = null, yaw = null, pressedA = false;
-    const poses = { left: null, right: null };   // where each controller is (for the ghosts), or null
-    for (const source of session.inputSources) {
-      if (!source.gamepad) continue;
-      if (!(source.handedness in buzzCheck)) {   // a controller just showed up: buzz it once, so you can feel it works
-        const motor = source.gamepad.hapticActuators?.length || source.gamepad.vibrationActuator;
-        buzzCheck[source.handedness] = motor ? "ok" : "unavailable";
-        buzz(source, 0.5, 150);
-      }
-      const pose = source.gripSpace ? frame.getPose(source.gripSpace, space) : null;
-      if (source.handedness === "left") {
-        leftSource = source;
-        poses.left = pose;
-        const trigger = source.gamepad.buttons[0]?.pressed ?? false;   // button 0 = the trigger
-        if (trigger && !triggerWasDown) { clicks++; buzz(source, 0.3, 30); }   // one click per press, with a small tick
-        triggerWasDown = trigger;
-        const xDown = source.gamepad.buttons[4]?.pressed ?? false;   // button 4 on the left controller = X
-        if (xDown && !xWasDown) toggleDepth();
-        xWasDown = xDown;
-      }
-      if (source.handedness !== "right" || !source.gripSpace) continue;
-      rightSource = source;
-      poses.right = pose;
-      if (pose) {
-        const p = pose.transform.position;   // meters: x = right, y = up, -z = forward
-        pos = [p.x, p.y, p.z];
-        // Twist: which way the controller points, seen from above (degrees; turning left = positive).
-        const q = pose.transform.orientation;
-        yaw = Math.atan2(2 * (q.x * q.z + q.w * q.y), 1 - 2 * (q.x * q.x + q.y * q.y)) * 180 / Math.PI;
-        grip = source.gamepad.buttons[1].pressed;   // button 1 = the grip (squeeze) button
-      }
-      const aDown = source.gamepad.buttons[4]?.pressed ?? false;   // button 4 = A
-      if (aDown && !aWasDown) { armClicks++; pressedA = true; }
-      aWasDown = aDown;
-      const bDown = source.gamepad.buttons[5]?.pressed ?? false;   // button 5 = B
-      if (bDown && !bWasDown) save("turns", (turns = (turns + 1) % 4));   // count one turn per press, not per frame
-      bWasDown = bDown;
-    }
-    // "Not now" (2 quick ticks): the grip does nothing while motion is OFF, and A only arms after you let go.
-    if (grip && !info.motion && (!gripWasDown || pressedA)) {
-      buzz(rightSource, 0.5, 40);
-      secondTickAt = time + 120;   // played by this loop, not setTimeout: Chrome slows timers while in VR
-    }
-    gripWasDown = grip;
-    if (secondTickAt && time >= secondTickAt) { secondTickAt = 0; buzz(rightSource, 0.5, 40); }
-    // Redraw the HUD about 30 times a second (as often as the camera sends pictures).
-    if (time - lastHudDraw > 33) {
-      lastHudDraw = time;
-      drawLiveView();
-      vr.hudChanged();
-    }
-    // Alarm = one long, strong buzz in BOTH hands: the arm stopped on its own (PC link lost, program stopped,
-    // or tracking lost while motion was armed). Let go and look at the arm.
-    const fault = !pcOk || info.status === "stopped" || (info.status === "tracking glitch" && wasArmed);
-    if (fault && !alarmed) {
-      buzz(leftSource, 1.0, 600);
-      buzz(rightSource, 1.0, 600);
-      quietUntil = time + 600;    // a new buzz would cut it short, so the force feedback below waits
-      wasArmed = !!info.motion;   // the alarm already says motion stopped: skip the disarm tick
-    }
-    alarmed = fault;
-    // Force feedback: shake the controllers about 10 times a second.
-    if (time - lastBuzz > 100 && time > quietUntil) {
-      lastBuzz = time;
-      const following = info.status === "following";
-      let push = 0;
-      if (following && info.limit) push = 0.55;   // pushing against a safety wall
-      if (following && info.landing && info.landing[2] < 40) {   // closing in on a surface: stronger as it gets closer
-        push = Math.max(push, 0.15 + 0.6 * (1 - info.landing[2] / 40));
-      }
-      if (push) buzz(rightSource, push, 110);
-      if (info.holding && !wasHolding) buzz(leftSource, 1.0, 160);   // the gripper just closed on something: a "clunk"
-      else if (info.holding && time - lastHum > 400) { lastHum = time; buzz(leftSource, 0.12, 80); }   // light hum = weight
-      wasHolding = !!info.holding;
-      if (!!info.motion !== wasArmed) { wasArmed = !!info.motion; buzz(rightSource, 0.4, 60); }   // tick when A arms/disarms
-    }
-    vr.update(info, poses, grip);
-    renderer.render(vr.scene, eyes);
-    // Send the hand to the PC about 30 times a second; its answer is the live coordinates.
-    if (!sending && time - lastSent > 33) {
-      sending = true;
-      lastSent = time;
-      fetch("/pose", { method: "POST", body: JSON.stringify({ grip, pos, yaw, clicks, arm_clicks: armClicks }) })
-        .then((res) => res.json())
-        .then(setInfo)
-        .catch(() => (pcOk = false))
-        .finally(() => (sending = false));
-    }
-    frames++;
-    frameWork += performance.now() - started;
-  });
-  // Once a second, in the page header: is VR keeping up? A headset frame lasts 11-14 ms; the work should stay well under that.
-  const showStats = setInterval(() => {
-    document.getElementById("stats").textContent =
-      `VR ${frames} fps · ${(frameWork / Math.max(frames, 1)).toFixed(1)} ms/frame · Camera ${cam.count} fps · ` +
-      `Buzz L ${buzzCheck.left ?? "–"} R ${buzzCheck.right ?? "–"}`;
-    cam.count = frames = frameWork = 0;
-  }, 1000);
-  session.onend = () => {
+  if (vrBtn.disabled || inVR) return;
+  vrBtn.disabled = true;   // requestSession can take many seconds; never start a second request meanwhile
+  vrBtn.textContent = "Starting VR…";
+  msg.textContent = "Starting the headset. Keep it on and wait for the VR view.";
+  let session, t = performance.now();
+  let showStats = null, ended = false;
+  const cleanup = () => {
+    ended = true;
     renderer.setAnimationLoop(null);
     inVR = false;
     clearInterval(showStats);
+    vrBtn.disabled = false;
+    vrBtn.textContent = "Enter VR";
     document.getElementById("stats").textContent = "Not in VR";
-    if (recorder?.state === "recording") recorder.stop();   // leaving VR also stops the recording
+    if (recorder?.state === "recording") recorder.stop();
   };
+  dbg("Enter VR pressed");
+  try {
+    session = await navigator.xr.requestSession("immersive-vr");
+    // Install cleanup before any graphics setup that might fail or lose the session.
+    session.addEventListener("end", () => { dbg("VR session ended"); cleanup(); }, { once: true });
+    session.addEventListener("visibilitychange", () => dbg(`VR visibility: ${session.visibilityState}`));
+    dbg(`requestSession took ${since(t)}`);
+    dbg(`VR visibility: ${session.visibilityState}`);
+    t = performance.now();
+    await renderer.xr.setSession(session);   // includes makeXRCompatible, right after the session starts
+    if (ended) return;
+    dbg(`setSession took ${since(t)}`);
+    dbg(`VR output layer: ${renderer.xr.getBaseLayer()?.constructor.name}`);
+    // This callback bypasses three.js: it tells us whether Chrome itself delivers VR frames.
+    session.requestAnimationFrame(() => dbg("Chrome delivered a native VR frame"));
+    msg.textContent = "";
+    vrBtn.textContent = "In VR";
+    const setupDone = performance.now();
+    let lastFrameAt = 0;
+    const space = renderer.xr.getReferenceSpace();
+    let sending = false, lastSent = 0, bWasDown = false, xWasDown = false;
+    let leftSource = null, rightSource = null, lastBuzz = 0, lastHum = 0, wasHolding = false, wasArmed = false;
+    let alarmed = false, quietUntil = 0, gripWasDown = false, secondTickAt = 0;
+    const buzzCheck = {};   // per hand: can this browser buzz that controller? (shown on the PC page)
+    let lastHudDraw = 0, frames = 0, frameWork = 0;
+    inVR = true;
+    let clicks = 0, triggerWasDown = false;   // left trigger clicks; the PC flips the gripper on each new one
+    let armClicks = 0, aWasDown = false;      // A presses; the PC arms/disarms motion on each new one
+    let clears = 0, bDownAt = 0;              // B held 2 s during an arm error; the PC clears the error on each new one
+
+    renderer.setAnimationLoop((time, frame) => {   // once per headset frame (72-90 per second)
+      if (!frame) return;   // three.js also calls this once outside the headset's frames; skip that call
+      const started = performance.now();
+      if (!lastFrameAt) dbg(`first VR frame, ${since(setupDone)} after setSession`);
+      else if (started - lastFrameAt > 150) dbg(`no VR frame for ${since(lastFrameAt)}`);
+      lastFrameAt = started;
+      let grip = false, pos = null, yaw = null, pressedA = false;
+      const poses = { left: null, right: null };   // where each controller is (for the ghosts), or null
+      for (const source of session.inputSources) {
+        if (!source.gamepad) continue;
+        if (!(source.handedness in buzzCheck)) {   // a controller just showed up: buzz it once, so you can feel it works
+          const motor = source.gamepad.hapticActuators?.length || source.gamepad.vibrationActuator;
+          buzzCheck[source.handedness] = motor ? "ok" : "unavailable";
+          buzz(source, 0.5, 150);
+        }
+        const pose = source.gripSpace ? frame.getPose(source.gripSpace, space) : null;
+        if (source.handedness === "left") {
+          leftSource = source;
+          poses.left = pose;
+          const trigger = source.gamepad.buttons[0]?.pressed ?? false;   // button 0 = the trigger
+          if (trigger && !triggerWasDown) { clicks++; buzz(source, 0.3, 30); }   // one click per press, with a small tick
+          triggerWasDown = trigger;
+          const xDown = source.gamepad.buttons[4]?.pressed ?? false;   // button 4 on the left controller = X
+          if (xDown && !xWasDown) toggleDepth();
+          xWasDown = xDown;
+        }
+        if (source.handedness !== "right" || !source.gripSpace) continue;
+        rightSource = source;
+        poses.right = pose;
+        if (pose) {
+          const p = pose.transform.position;   // meters: x = right, y = up, -z = forward
+          pos = [p.x, p.y, p.z];
+          // Twist: which way the controller points, seen from above (degrees; turning left = positive).
+          const q = pose.transform.orientation;
+          yaw = Math.atan2(2 * (q.x * q.z + q.w * q.y), 1 - 2 * (q.x * q.x + q.y * q.y)) * 180 / Math.PI;
+          grip = source.gamepad.buttons[1].pressed;   // button 1 = the grip (squeeze) button
+        }
+        const aDown = source.gamepad.buttons[4]?.pressed ?? false;   // button 4 = A
+        if (aDown && !aWasDown) { armClicks++; pressedA = true; }
+        aWasDown = aDown;
+        const bDown = source.gamepad.buttons[5]?.pressed ?? false;   // button 5 = B
+        if (info.status === "arm error") {   // during an arm error, B held for 2 s asks the PC to clear it
+          if (bDown && !bWasDown) bDownAt = time;
+          if (!bDown) bDownAt = 0;
+          if (bDownAt && time - bDownAt > 2000) { clears++; bDownAt = 0; buzz(source, 0.8, 200); }
+        } else if (bDown && !bWasDown) save("turns", (turns = (turns + 1) % 4));   // count one turn per press, not per frame
+        bWasDown = bDown;
+      }
+      // "Not now" (2 quick ticks): the grip does nothing while motion is OFF, and A only arms after you let go.
+      if (grip && !info.motion && (!gripWasDown || pressedA)) {
+        buzz(rightSource, 0.5, 40);
+        secondTickAt = time + 120;   // played by this loop, not setTimeout: Chrome slows timers while in VR
+      }
+      gripWasDown = grip;
+      if (secondTickAt && time >= secondTickAt) { secondTickAt = 0; buzz(rightSource, 0.5, 40); }
+      // Redraw the HUD about 30 times a second (as often as the camera sends pictures).
+      if (time - lastHudDraw > 33) {
+        lastHudDraw = time;
+        drawLiveView();
+        vr.hudChanged();
+      }
+      // Alarm = one long, strong buzz in BOTH hands: the arm stopped on its own (PC link lost, program stopped,
+      // or tracking lost while motion was armed). Let go and look at the arm.
+      const fault = !pcOk || info.status === "stopped" || info.status === "arm error" ||
+                    (info.status === "tracking glitch" && wasArmed);
+      if (fault && !alarmed) {
+        buzz(leftSource, 1.0, 600);
+        buzz(rightSource, 1.0, 600);
+        quietUntil = time + 600;    // a new buzz would cut it short, so the force feedback below waits
+        wasArmed = !!info.motion;   // the alarm already says motion stopped: skip the disarm tick
+      }
+      alarmed = fault;
+      // Force feedback: shake the controllers about 10 times a second.
+      if (time - lastBuzz > 100 && time > quietUntil) {
+        lastBuzz = time;
+        const following = info.status === "following";
+        let push = 0;
+        if (following && info.limit) push = 0.55;   // pushing against a safety wall
+        if (following && info.landing && info.landing[2] < 40) {   // closing in on a surface: stronger as it gets closer
+          push = Math.max(push, 0.15 + 0.6 * (1 - info.landing[2] / 40));
+        }
+        if (push) buzz(rightSource, push, 110);
+        if (info.holding && !wasHolding) buzz(leftSource, 1.0, 160);   // the gripper just closed on something: a "clunk"
+        else if (info.holding && time - lastHum > 400) { lastHum = time; buzz(leftSource, 0.12, 80); }   // light hum = weight
+        wasHolding = !!info.holding;
+        if (!!info.motion !== wasArmed) { wasArmed = !!info.motion; buzz(rightSource, 0.4, 60); }   // tick when A arms/disarms
+      }
+      vr.update(info, poses, grip);
+      renderer.render(vr.scene, eyes);
+      // Send the hand to the PC about 30 times a second; its answer is the live coordinates.
+      if (!sending && time - lastSent > 33) {
+        sending = true;
+        lastSent = time;
+        fetch("/pose", { method: "POST", body: JSON.stringify({ grip, pos, yaw, clicks, arm_clicks: armClicks, clears }) })
+          .then((res) => res.json())
+          .then(setInfo)
+          .catch(() => (pcOk = false))
+          .finally(() => (sending = false));
+      }
+      frames++;
+      frameWork += performance.now() - started;
+      if (performance.now() - started > 50) dbg(`slow VR frame: ${since(started)} of work`);
+    });
+    // Once a second, in the page header: is VR keeping up? A headset frame lasts 11-14 ms; the work should stay well under that.
+    showStats = setInterval(() => {
+      document.getElementById("stats").textContent =
+        `VR ${frames} fps · ${(frameWork / Math.max(frames, 1)).toFixed(1)} ms/frame · Camera ${cam.count} fps · ` +
+        `Buzz L ${buzzCheck.left ?? "–"} R ${buzzCheck.right ?? "–"}`;
+      dbg(document.getElementById("stats").textContent);
+      cam.count = frames = frameWork = 0;
+      if (!lastFrameAt && performance.now() - setupDone > 5000) {
+        msg.textContent = `No VR frames yet (${session.visibilityState}). Keep the headset on, close the Link menu, or test /vr_check.html.`;
+      }
+    }, 1000);
+  } catch (e) {
+    dbg(`VR startup failed after ${since(t)}: ${e}`);
+    msg.textContent = `Couldn't start VR: ${e.name}: ${e.message}. Check Quest Link, then try again.`;
+    if (session && !ended) {
+      try { await session.end(); }
+      catch (endError) {
+        dbg(`Could not end failed session: ${endError}`);
+        msg.textContent += " Close this tab to release the failed VR session before retrying.";
+        return;
+      }
+    }
+    cleanup();
+  }
 };
 
 // Shake a controller: strength 0-1 for `ms` milliseconds (uses whichever rumble the browser offers).

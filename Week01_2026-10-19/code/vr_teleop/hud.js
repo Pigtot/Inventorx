@@ -11,6 +11,7 @@ const HUD = {
 const HUD_TITLES = {
   following: "Following your hand", "let go": "Holding position", "waiting for headset": "Waiting for headset",
   "tracking glitch": "Tracking lost · Release, then press A", "motion off": "Motion off · Press A", stopped: "Stopped",
+  "arm error": "Arm error · Look at it, then hold B 2 s",
 };
 
 // The picture is turned by `turns` quarter turns (clockwise) and scaled by s to fill the canvas.
@@ -72,7 +73,8 @@ function drawHUD(c, W, H, raw, camW, camH, turns, info, pcOk, depth) {
 
   // 3. Top: status (left) and camera calibration (right). Below them, a limit warning. Near the bottom, the depth key.
   const title = !pcOk ? "PC link lost" : (info.live === false ? "Dry run · " : "") + (HUD_TITLES[info.status] ?? "Starting");
-  label(title, 20 * S, 32 * S, !pcOk ? HUD.amber : info.motion ? HUD.accent : HUD.white, 17);
+  label(title, 20 * S, 32 * S, !pcOk || info.error ? HUD.amber : info.motion ? HUD.accent : HUD.white, 17);
+  if (info.error && pcOk) label(info.error, W / 2, 120 * S, HUD.amber, 14, "center");   // which arm error
   label(info.calib?.done ? `Calibrated ±${info.calib.rms} mm` : "Not calibrated", W - 20 * S, 32 * S,
         info.calib?.done ? HUD.dim : HUD.amber, 13, "right");
   if (info.limit && pcOk) label(`At ${info.limit}`, W / 2, 76 * S, HUD.amber, 16, "center");

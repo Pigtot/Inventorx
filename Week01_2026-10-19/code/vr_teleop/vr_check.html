@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VR connection check</title>
+<style>
+  body { max-width: 52rem; margin: 2rem auto; padding: 0 1rem; background: #101820; color: #ecf4f8; font: 16px/1.5 system-ui; }
+  button { font: inherit; padding: .6rem 1rem; margin-right: .5rem; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 1rem; background: #172631; }
+  canvas { display: block; width: 320px; height: 180px; margin-top: 1rem; }
+</style>
+<h1>VR connection check</h1>
+<p>This page tests Chrome and the headset. It never sends hand commands or moves the arm.</p>
+<ol>
+  <li>Start the Python program without <code>--live</code>.</li>
+  <li>Connect Quest Link and open this page in Chrome on the PC.</li>
+  <li>Press Enter VR. Look for a screen that slowly changes between blue and green.</li>
+</ol>
+<p id="backend">Checking the Python server...</p>
+<p id="status">Checking WebXR...</p>
+<button id="enter" disabled>Enter VR</button><button id="exit" disabled>Exit VR</button>
+<canvas id="view" width="320" height="180"></canvas>
+<pre id="log" aria-live="polite"></pre>
+<script>
+const enter = document.getElementById("enter"), exit = document.getElementById("exit");
+const status = document.getElementById("status"), log = document.getElementById("log");
+const canvas = document.getElementById("view");
+let active = null, gl = null, stage = "", stageAt = 0, startedAt = 0, frames = 0;
+function note(text) {
+  log.textContent += `${new Date().toLocaleTimeString()}  ${text}\n`;
+  console.log("[VR check]", text);
+}
+function step(text) {
+  stage = text;
+  stageAt = performance.now();
+  status.textContent = text;
+  note(text);
+}
+function done() { note(`${stage}: finished in ${Math.round(performance.now() - stageAt)} ms`); }
+function failure(error) {
+  const text = `${stage || "Page"}: ${error?.name || "Error"}: ${error?.message || error}`;
+  status.textContent = text;
+  note(text);
+}
+window.addEventListener("error", e => failure(e.error || e.message));
+window.addEventListener("unhandledrejection", e => failure(e.reason));
+canvas.addEventListener("webglcontextlost", () => {
+  failure(new Error("Graphics context lost. Check chrome://gpu and the Meta Link runtime."));
+  active?.end().catch(failure);
+});
+
+// /status only reads coordinates. No camera or robot connection is needed for this check.
+fetch("/status", { signal: AbortSignal.timeout(3000), cache: "no-store" })
+  .then(async response => {
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const info = await response.json();
+    document.getElementById("backend").textContent =
+      `Python server: responding${info.live ? " (live program running; restart without --live for this test)" : ""}.`;
+    note("Python /status: OK");
+  })
+  .catch(error => {
+    document.getElementById("backend").textContent =
+      `Python server: ${error.message}. Use http://localhost:8000/vr_check.html with vr_teleop.py running.`;
+  });
+
+(async () => {
+  if (!window.isSecureContext || location.protocol === "file:") {
+    status.textContent = "Open http://localhost:8000/vr_check.html in Chrome on the PC.";
+    return;
+  }
+  if (!navigator.xr) {
+    status.textContent = "WebXR unavailable. Use Chrome on the PC and check its VR permissions.";
+    return;
+  }
+  const supported = await navigator.xr.isSessionSupported("immersive-vr");
+  status.textContent = supported ? "Headset available. Ready to test." : "No VR headset available to Chrome. Start Quest Link, then reload.";
+  enter.disabled = !supported;
+  note(`immersive-vr supported: ${supported}`);
+})();
+
+exit.onclick = () => active?.end().catch(failure);
+enter.onclick = async () => {
+  enter.disabled = true;
+  frames = 0;
+  let session = null;
+  try {
+    step("1. Asking Meta/OpenXR for a VR session");
+    // Keep this directly in the click handler: WebXR requires a user's button press.
+    session = await navigator.xr.requestSession("immersive-vr");
+    done();
+    active = session;
+    exit.disabled = false;
+    session.addEventListener("end", () => {
+      active = null;
+      enter.disabled = false;
+      exit.disabled = true;
+      note(`Session ended; ${frames} frames drawn.`);
+      status.textContent = `Session ended; ${frames} frames drawn. See the log for any startup error.`;
+    }, { once: true });
+
+    step("2. Making the graphics context compatible with the headset");
+    gl ??= canvas.getContext("webgl", { alpha: false, antialias: false });
+    if (!gl) throw new Error("WebGL could not start. Check chrome://gpu.");
+    await gl.makeXRCompatible();
+    done();
+    if (active !== session) return;
+
+    step("3. Connecting the graphics output to the headset");
+    const layer = new XRWebGLLayer(session, gl);
+    session.updateRenderState({ baseLayer: layer });
+    const space = await session.requestReferenceSpace("local");
+    done();
+    if (active !== session) return;
+
+    step("4. Waiting for the first tracked VR frame (put on the headset)");
+    startedAt = performance.now();
+    frames = 0;
+    function draw(time, frame) {
+      if (active !== session) return;
+      try {
+        const pose = frame.getViewerPose(space);
+        if (pose) {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+          gl.viewport(0, 0, layer.framebufferWidth, layer.framebufferHeight);
+          gl.clearColor(0.02, 0.25 + 0.15 * Math.sin(time / 1000), 0.55, 1);
+          gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+          if (!frames) { done(); note("First tracked frame drawn: the basic VR rendering path works."); }
+          frames++;
+        }
+        session.requestAnimationFrame(draw);
+      } catch (error) {
+        failure(error);
+        session.end().catch(failure);
+      }
+    }
+    session.requestAnimationFrame(draw);
+  } catch (error) {
+    const failedStage = stage;
+    if (session && active === session) await session.end().catch(() => {});
+    stage = failedStage;
+    failure(error);
+    enter.disabled = false;
+  }
+};
+setInterval(() => {
+  if (active && frames) {
+    status.textContent = `${frames} frames drawn; average ${(frames * 1000 / Math.max(performance.now() - startedAt, 1)).toFixed(0)} fps. Blue/green in the headset = basic VR works.`;
+  } else if (enter.disabled && stage) {
+    status.textContent = `${stage} — waiting ${Math.floor((performance.now() - stageAt) / 1000)} s`;
+  }
+}, 1000);
+</script>
+</html>

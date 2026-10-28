@@ -15,6 +15,7 @@ Safety layers: workspace limits in this script, the arm's own fence and speed ca
 a dead-man timer, and a tracking-glitch check (see Lesson 5).
 Run it like this:
     ~/venvs/xarm/Scripts/python.exe vr_teleop.py          (dry run)
+    ~/venvs/xarm/Scripts/python.exe vr_teleop.py --live --slow   (first live test: 50 mm/s cap)
     ~/venvs/xarm/Scripts/python.exe vr_teleop.py --live   (the arm moves)
 Then open http://localhost:8000 in Chrome on this PC. Press Ctrl+C here to quit.
 """
@@ -23,6 +24,7 @@ import math
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -32,28 +34,30 @@ from urllib.parse import parse_qs, urlsplit
 import numpy as np
 
 import calib   # calib.py, next to this file: camera-to-gripper calibration math
-from safety import ArmWatchdog, COMMAND_TIMEOUT, CommandCancelled, HandInput, SafetyError, checked, reading
+from safety import (ArmError, ArmWatchdog, COMMAND_TIMEOUT, CommandCancelled, HEADSET_TIMEOUT, HandInput,
+                    SafetyError, Stalled, checked, reading)
 
 ARM_IP = "192.168.1.217"  # from the label on our control box
 MOVE_ARM = "--live" in sys.argv   # without --live, the arm is never touched
+SLOW_TEST = "--slow" in sys.argv   # first live test: lower both the requested speed and the controller's cap
 
 # Curved response: arm move = hand move x gain, and the gain grows the farther you reach from where you gripped.
 FINE = 0.5      # gain for small moves (precise): 2 cm of hand = 1 cm of arm
 FAST = 3.0      # gain for big moves (range): 30 cm of hand = 90 cm of arm
 FAR = 300       # mm of hand movement where the gain reaches FAST
-SPEED = 150     # mm/s: the fastest this script lets the tool move
+SPEED = 50 if SLOW_TEST else 150   # mm/s: the fastest this script lets the tool move
 
 # Safe workspace for the tool tip, in the arm's coordinates (mm): X = forward, Y = left, Z = up, 0 = base.
 FLOOR = -75     # lowest the tip may go (our table is below the base's zero)
 SLOW_ZONE = 75  # within this many mm above the floor, the tool slows down...
-SLOW_SPEED = 50 # ...to this speed (mm/s), so touching down on a block is gentle
+SLOW_SPEED = 25 if SLOW_TEST else 50 # ...to this speed (mm/s), so touching down on a block is gentle
 CEILING = 450   # highest
 REACH = 560     # farthest from the base (full reach is about 700 mm; we keep a margin)
 NEAR = 200      # closest to the base's center line, so the arm can't fold into itself
 FRONT = 100     # X stays above this: the arm stays in front of its base, away from the operator
 # Second layer, checked by the arm's own controller even if this script has a bug:
 FENCE = [650, 50, 650, -650, 520, -105]   # x_max, x_min, y_max, y_min, z_max, z_min (mm): leaving it = arm stops
-ARM_MAX_SPEED = 250   # mm/s: the controller refuses to go faster than this while teleop runs
+ARM_MAX_SPEED = 50 if SLOW_TEST else 250   # mm/s: the arm controller's own speed cap
 GRIPPER_OPEN, GRIPPER_CLOSED = 850, 0   # xArm Gripper positions: 850 = wide open, 0 = closed (it stops on the block)
 GRIPPER_SPEED = 3000
 YAW_LIMIT = 170   # degrees: the gripper's turn stays within -170..170, so it never spins the long way around
@@ -68,6 +72,10 @@ PORT = 8000
 HERE = Path(__file__).resolve().parent
 MEDIA = HERE.parents[1] / "media"   # this week's media/ folder
 CALIB_FILE = HERE / "camera_calibration.json"   # where the D435 sits on the gripper (made by the calibration steps)
+SLOW_STEP = 0.1   # s: a loop step slower than this gets noted, so a "Control loop stalled" stop names its cause
+# The controller answers the first move after "ready" slowly (we measured 359 ms). That move goes to where the
+# tool already is, so it may take this long (s). Every other move keeps the normal 0.3 s limit.
+FIRST_MOVE_ALLOW = 1.0
 
 hands = HandInput()   # validates headset messages even while the control loop is busy
 report = {}   # what the VR page shows (status and live coordinates), rebuilt 30 times a second
@@ -77,6 +85,7 @@ new_picture = threading.Condition()   # lets the web server wait until a newer p
 T_tool_cam, calib_info = calib.load(CALIB_FILE)   # None until the camera is calibrated
 calibration = {"mark": None, "pairs": []}       # calibration in progress: the dot (base mm) and the point pairs
 arm, target, yaw = None, [300.0, 0.0, 300.0], 0.0   # set for real once the arm is on
+watchdog = None   # the stop timer, once the arm is on
 
 
 class Server(ThreadingHTTPServer):
@@ -142,6 +151,9 @@ class Handler(SimpleHTTPRequestHandler):
             out = MEDIA / f"{name}_{datetime.now():%Y-%m-%d_%H%M%S}{Path(self.path).suffix}"
             out.write_bytes(body)
             print(f"\nSaved video: {out} ({len(body) / 1e6:.1f} MB)")
+        elif self.path == "/log":   # debug timing from the page (temporary), kept in vr_debug.log
+            with open(HERE / "vr_debug.log", "a", encoding="utf-8") as f:
+                f.write(f"{datetime.now():%H:%M:%S.%f}"[:12] + "  " + body.decode() + "\n")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(reply)))
@@ -150,6 +162,30 @@ class Handler(SimpleHTTPRequestHandler):
 
     def log_message(self, *args):
         pass   # don't print a line for every message
+
+
+def note_slow(step, seconds):
+    """Print a slow step and add it to vr_debug.log."""
+    line = f"slow step: {step} took {seconds * 1000:.0f} ms"
+    print(f"\n{line}")
+    with open(HERE / "vr_debug.log", "a", encoding="utf-8") as f:
+        f.write(f"{datetime.now():%H:%M:%S.%f}"[:12] + "  " + line + "\n")
+
+
+@contextmanager
+def timed(step):
+    """Time one step of the control loop. It is noted even if the step fails (a stall usually ends in an error)."""
+    start = time.monotonic()
+    if watchdog:
+        watchdog.step = step   # so a stall stop can say which step it caught
+    try:
+        yield
+    finally:
+        if watchdog:
+            watchdog.step = "between steps"
+        took = time.monotonic() - start
+        if took > SLOW_STEP:
+            note_slow(step, took)
 
 
 def hand_to_arm(dx, dy, dz):
@@ -340,18 +376,25 @@ def connect_arm(factory=None, confirm=input):
 def restore(arm, old):
     """Restore safety settings while leaving the arm stopped, never ready to resume."""
     checked(arm.set_state(4), "Stop before restoring settings")
-    checked(arm.set_mode(0), "Restore position mode")
-    checked(arm.set_fence_mode(bool(old[5])), "Restore fence switch")
-    checked(arm.set_reduced_tcp_boundary(old[1]), "Restore fence boundary")
-    checked(arm.set_reduced_max_tcp_speed(old[2]), "Restore speed cap")
-    checked(arm.set_reduced_mode(bool(old[0])), "Restore reduced-mode switch")
+    steps = [(arm.set_mode, 0, "Restore position mode"), (arm.set_fence_mode, bool(old[5]), "Restore fence switch"),
+             (arm.set_reduced_tcp_boundary, old[1], "Restore fence boundary"),
+             (arm.set_reduced_max_tcp_speed, old[2], "Restore speed cap"),
+             (arm.set_reduced_mode, bool(old[0]), "Restore reduced-mode switch")]
+    for method, value, action in steps:
+        code = method(value)
+        if code in (1, [1]):   # the arm's own error blocks settings: clear it (the arm stays stopped), then retry
+            print("\nCleared the arm's error so its safety settings could be restored.")
+            checked(arm.clean_error(), "Clear arm error")
+            checked(arm.set_state(4), "Stop before restoring settings")
+            code = method(value)
+        checked(code, action)
 
 
 
 def main():
-    global arm, target, yaw, report
+    global arm, target, yaw, report, watchdog
     server = None
-    stop_arm = old = watchdog = None
+    stop_arm = old = None
     try:
         try:
             server = Server(("127.0.0.1", PORT), partial(Handler, directory=HERE))
@@ -361,6 +404,8 @@ def main():
         threading.Thread(target=server.serve_forever, daemon=True).start()
         threading.Thread(target=camera_loop, daemon=True).start()
         print(f"Open http://localhost:{PORT} in Chrome on this PC. Press Ctrl+C here to quit.")
+        if SLOW_TEST:
+            print(f"SLOW TEST: tool speed {SPEED} mm/s, near-floor speed {SLOW_SPEED} mm/s, controller cap {ARM_MAX_SPEED} mm/s.")
         if MOVE_ARM:
             arm, stop_arm, old = connect_arm()
             watchdog = ArmWatchdog(arm, stop_arm, hands)
@@ -370,37 +415,51 @@ def main():
         hand0 = arm0 = hand_epoch = None
         arm_yaw0 = twist = last_hand_yaw = 0.0
         gripper = "open" if not arm or reading(arm.get_gripper_position(), "Read gripper") > GRIPPER_OPEN / 2 else "closed"
-        last_clicks = None
+        last_clicks = last_clears = arm_error = None
         grip_open, last_grip_read, holding, tick = (1.0 if gripper == "open" else 0.0), None, False, 0
+        print(f"Step timer on: any loop step over {SLOW_STEP * 1000:.0f} ms is printed here and in vr_debug.log.")
         print("LIVE: release the grip, then press A to arm motion.\n" if arm else "DRY RUN: the arm will not move.\n")
+        last_loop = time.monotonic()
         while True:
             time.sleep(1 / 30)
-            if watchdog:
-                watchdog.pulse()
+            loop_time = time.monotonic()
+            if loop_time - last_loop > SLOW_STEP + 1 / 30:   # the whole loop, minus its 1/30 s nap, was slow
+                note_slow("whole loop", loop_time - last_loop - 1 / 30)
+            last_loop = loop_time
             try:
+                if watchdog:
+                    watchdog.pulse()
+                arm_error = None   # this tick passed the arm's error check
                 hand = hands.snapshot()
+                last_clears = hand["clears"] if hand["fresh"] else None
                 grip, pos, hand_yaw = hand["grip"], hand["pos"], hand["yaw"]
                 motion_on, status, epoch = hand["motion"], hand["status"], hand["epoch"]
                 if hand0 is not None and (not grip or epoch != hand_epoch):
                     if watchdog:
-                        watchdog.stop()   # stay stopped; only a NEW valid grip can make the arm ready again
+                        with timed("stop on let go"):
+                            watchdog.stop()   # stay stopped; only a NEW valid grip can make the arm ready again
                     hand0 = None
                 if hand["fresh"]:
                     if motion_on and last_clicks is not None and hand["clicks"] > last_clicks:
                         wanted = "closed" if gripper == "open" else "open"
                         if watchdog:
-                            watchdog.command(epoch, "Move gripper", arm.set_gripper_position,
-                                             GRIPPER_CLOSED if wanted == "closed" else GRIPPER_OPEN,
-                                             wait=False, grip=False)
+                            with timed("move gripper"):
+                                watchdog.command(epoch, "Move gripper", arm.set_gripper_position,
+                                                 GRIPPER_CLOSED if wanted == "closed" else GRIPPER_OPEN,
+                                                 wait=False, grip=False)
                         gripper = wanted
                     last_clicks = hand["clicks"]
                 else:
                     last_clicks = None
+                first = False   # True on the first move after a fresh grip
                 if grip:
                     if hand0 is None:
-                        now = reading(arm.get_position(), "Read tool pose") if arm else [*target, 0, 0, yaw]
+                        first = True
+                        with timed("read tool pose"):
+                            now = reading(arm.get_position(), "Read tool pose") if arm else [*target, 0, 0, yaw]
                         if watchdog:
-                            watchdog.command(epoch, "Ready for fresh grip", arm.set_state, 0)
+                            with timed("ready for fresh grip"):
+                                watchdog.command(epoch, "Ready for fresh grip", arm.set_state, 0)
                         hand0, arm0, hand_epoch = pos, now[:3], epoch
                         arm_yaw0, twist, last_hand_yaw = now[5], 0.0, hand_yaw
                     move = curve(hand_to_arm(*(p - p0 for p, p0 in zip(pos, hand0))))
@@ -413,13 +472,16 @@ def main():
                         twist = yaw - arm_yaw0
                     if watchdog:
                         speed = SLOW_SPEED if target[2] < FLOOR + SLOW_ZONE else SPEED
-                        watchdog.command(epoch, "Move tool", arm.set_position,
-                                         *target, start[3], start[4], yaw, speed=speed, wait=False)
+                        with timed("first move" if first else "move tool"):
+                            watchdog.command(epoch, "Move tool", arm.set_position,
+                                             *target, start[3], start[4], yaw, speed=speed, wait=False,
+                                             allow=FIRST_MOVE_ALLOW if first else HEADSET_TIMEOUT)
                 else:
                     limit = ""
                 tick += 1
                 if tick % 6 == 0:
-                    result = arm.get_gripper_position() if arm else (0, GRIPPER_OPEN if gripper == "open" else GRIPPER_CLOSED)
+                    with timed("read gripper"):
+                        result = arm.get_gripper_position() if arm else (0, GRIPPER_OPEN if gripper == "open" else GRIPPER_CLOSED)
                     value = reading(result, "Read gripper opening")
                     if watchdog:
                         watchdog.check()
@@ -428,8 +490,9 @@ def main():
                         grip_open, last_grip_read = value / GRIPPER_OPEN, value
                 landing = tip_px = None
                 if T_tool_cam is not None and camera["depth"] is not None:
-                    landing = calib.landing_point(T_tool_cam, camera["depth"], camera["intr"])
-                    tip_px = calib.tip_pixel(T_tool_cam, camera["intr"])
+                    with timed("depth landing point"):
+                        landing = calib.landing_point(T_tool_cam, camera["depth"], camera["intr"])
+                        tip_px = calib.tip_pixel(T_tool_cam, camera["intr"])
                 tool = arm.position if arm else [*target, 0, 0, yaw]
                 report = {"live": bool(arm), "status": status, "limit": limit, "gripper": gripper, "motion": motion_on,
                           "grip_open": round(grip_open, 2), "holding": holding,
@@ -448,6 +511,29 @@ def main():
                     watchdog.stop()
                 hand0 = None
                 last_clicks = None
+            except Stalled as exc:
+                # The arm is already stopped. A slow reply isn't worth a restart: let go, press A, and carry on.
+                watchdog.recover()
+                hand0 = last_clicks = None
+                print(f"\n{exc} The arm is stopped. Let go, then press A to carry on.")
+            except ArmError as exc:
+                # The arm stopped itself (collision, joint limit, fence...). It stays stopped until someone
+                # looks at it and holds B for 2 s in VR. After that: let go, then press A.
+                hand0 = last_clicks = None
+                hands.disarm("motion off")
+                if arm_error is None:
+                    watchdog.stop()
+                    print(f"\n{exc} The arm is stopped. Look at it, then hold B for 2 s in VR to clear the error.")
+                arm_error = str(exc)
+                hand = hands.snapshot()
+                if hand["fresh"] and last_clears is not None and hand["clears"] > last_clears:
+                    try:
+                        watchdog.clear_error()
+                        print("\nArm error cleared. The arm stays stopped: let go, then press A.")
+                    except SafetyError as failed:
+                        print(f"\nCould not clear the arm error: {failed} Check the E-stop and UFactory Studio.")
+                last_clears = hand["clears"] if hand["fresh"] else None
+                report = dict(report, motion=False, status="arm error", error=arm_error)
     except KeyboardInterrupt:
         return 0
     except Exception as exc:
