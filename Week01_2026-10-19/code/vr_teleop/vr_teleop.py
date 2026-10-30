@@ -17,6 +17,8 @@ Run it like this:
     ~/venvs/xarm/Scripts/python.exe vr_teleop.py          (dry run)
     ~/venvs/xarm/Scripts/python.exe vr_teleop.py --live --slow   (first live test: 50 mm/s cap)
     ~/venvs/xarm/Scripts/python.exe vr_teleop.py --live   (the arm moves)
+On the Mac, use ~/venvs/xarm/bin/python vr_teleop.py --camera-admin for a dry run.
+macOS asks for camera-only USB permission. The web server and arm control stay unprivileged.
 Then open http://localhost:8000 in Chrome on this PC. Press Ctrl+C here to quit.
 """
 import json
@@ -62,7 +64,8 @@ GRIPPER_OPEN, GRIPPER_CLOSED = 850, 0   # xArm Gripper positions: 850 = wide ope
 GRIPPER_SPEED = 3000
 YAW_LIMIT = 170   # degrees: the gripper's turn stays within -170..170, so it never spins the long way around
 
-CAM_W, CAM_H, CAM_FPS = 640, 360, 30   # camera picture in VR: low quality on purpose, so it stays light and smooth
+# Our Mac connection reports USB 2.1: its color sensor offers 640x480, not 640x360.
+CAM_W, CAM_H, CAM_FPS = (640, 480, 15) if sys.platform == "darwin" else (640, 360, 30)
 # Depth view: distances from DEPTH_NEAR to DEPTH_FAR (mm) get colors red, yellow, green, cyan, blue.
 DEPTH_NEAR, DEPTH_FAR = 150, 700
 DEPTH_COLORS = np.array([[255, 60, 40], [255, 220, 0], [60, 220, 90], [0, 200, 255], [40, 70, 255]])
@@ -82,6 +85,7 @@ report = {}   # what the VR page shows (status and live coordinates), rebuilt 30
 camera = {"data": None, "id": 0, "fps": 0,    # newest D435 picture (raw RGB bytes) and its number
           "depth": None, "intr": None}         # its depth picture (mm, lined up with the color) and lens numbers
 new_picture = threading.Condition()   # lets the web server wait until a newer picture arrives
+camera_stop = threading.Event()
 T_tool_cam, calib_info = calib.load(CALIB_FILE)   # None until the camera is calibrated
 calibration = {"mark": None, "pairs": []}       # calibration in progress: the dot (base mm) and the point pairs
 arm, target, yaw = None, [300.0, 0.0, 300.0], 0.0   # set for real once the arm is on
@@ -228,6 +232,11 @@ def keep_safe(x, y, z):
 def camera_loop():
     """Keep only the newest D435 color picture in `camera`, plus its depth picture. The color stays raw
     (no JPEG): everything is on this one PC, so skipping compression saves time on both ends."""
+    if sys.platform == "darwin":
+        from camera_bridge import receive_camera
+        receive_camera(camera, new_picture, camera_stop, CAM_W, CAM_H, CAM_FPS,
+                       admin="--camera-admin" in sys.argv)
+        return
     try:
         import pyrealsense2 as rs
     except ImportError:
@@ -395,6 +404,7 @@ def main():
     global arm, target, yaw, report, watchdog
     server = None
     stop_arm = old = None
+    camera_stop.clear()
     try:
         try:
             server = Server(("127.0.0.1", PORT), partial(Handler, directory=HERE))
@@ -555,6 +565,7 @@ def main():
                 print(f"\nCould not close the command connection: {exc} Use the E-stop.")
         if watchdog:
             watchdog.close()
+        camera_stop.set()
         if stop_arm:
             try:
                 restore(stop_arm, old)

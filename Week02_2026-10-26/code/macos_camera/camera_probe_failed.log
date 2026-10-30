@@ -1,0 +1,10 @@
+Starting camera-only probe; no robot SDK is loaded.
+ 28/10 13:13:45,822 ERROR [0x1ecfb6180] (context.cpp:40) No valid configuration file found at : /Users/patrickkang/.realsense-config.json loading defaults
+ 28/10 13:14:00,919 ERROR [0x1ecfb6180] (rs.cpp:256) [rs2_pipeline_start_with_config( pipe:0x105a7f700, config:0xb8f248af0 ) UNKNOWN] No device connected
+ 28/10 13:14:00,920 ERROR [0x1ecfb6180] (rs.cpp:256) [rs2_delete_pipeline_profile( profile:nullptr ) UNKNOWN] null pointer passed for argument "profile"
+ 28/10 13:14:00,923 WARNING [0x1ecfb6180] (rs.cpp:2412) null pointer passed for argument "profile"
+Traceback (most recent call last):
+  File "/private/tmp/inventorx-camera-probe.py", line 13, in <module>
+    profile = pipeline.start(config)
+              ^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: No device connected

@@ -1,6 +1,6 @@
 // hud.js: the heads-up display drawn over the D435 picture.
 // The same canvas is shown on the PC page, used as the camera window in VR, and recorded.
-// Picture coordinates: (u, v) = pixel in the camera's own 640 x 360 picture. View coordinates: pixel on the HUD canvas.
+// Picture coordinates: (u, v) = pixel in the camera's own picture. View coordinates: pixel on the HUD canvas.
 
 const HUD = {
   accent: "#4fd8ff", white: "#f2f4f7", dim: "rgba(242, 244, 247, 0.45)", amber: "#ffb347",

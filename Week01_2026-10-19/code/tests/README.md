@@ -11,6 +11,15 @@ These tests use a fake arm and made-up camera points. They never connect to the 
 
 The tests cover all eight audit findings: a blocked SDK connection, mode changes, failed safety setup, a failed first lift, tracking recovery, combined workspace limits, rejected calibration, and stable photo labels.
 
+The Mac camera and Quest USB setup checks added in Week 2 live with that week's diagnostics. From the repository root, run them with local socket access:
+
+```sh
+python3 -m unittest discover -s Week02_2026-10-26/code/macos_camera -p test_camera_bridge.py -v
+python3 -m unittest discover -s Week02_2026-10-26/code/quest_usb -p test_connect_quest.py -v
+```
+
+They use generated camera frames, fake devices, and fake HTTP responses. They never request administrator access or contact hardware. The mode tests also check that `--camera-admin` does not enable live arm control.
+
 For the VR startup regression alone, from the **week folder** on the Windows PC, run:
 
 ```powershell
